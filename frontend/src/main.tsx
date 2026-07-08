@@ -1,16 +1,20 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
+  CheckCircle2,
   ClipboardCheck,
+  Clock3,
+  Database,
   FileDown,
   FileSpreadsheet,
   Factory,
   Gauge,
   Home,
   LogOut,
-  Settings,
+  ShieldCheck,
   UploadCloud,
   Users,
   Wrench
@@ -34,19 +38,22 @@ import { API_URL, api, Equipment, ProductionLine, Upload, User } from "./lib/api
 import "./styles.css";
 
 type View = "home" | "upload" | "loads" | "corrections" | "dashboard" | "quality" | "equipment" | "lines" | "reports" | "users";
+type NavItem = readonly [View, React.ElementType, string, string];
+type KpiTone = "good" | "warn" | "danger" | "neutral";
+type KpiItem = [string, React.ReactNode, string?, KpiTone?];
 
-const nav = [
-  ["home", Home, "Inicio"],
-  ["upload", UploadCloud, "Cargar archivo"],
-  ["loads", FileSpreadsheet, "Cargas"],
-  ["corrections", ClipboardCheck, "Correcciones"],
-  ["dashboard", BarChart3, "Dashboard"],
-  ["quality", Gauge, "Calidad"],
-  ["equipment", Wrench, "Equipos"],
-  ["lines", Factory, "Líneas"],
-  ["reports", FileDown, "Reportes"],
-  ["users", Users, "Usuarios"]
-] as const;
+const nav: readonly NavItem[] = [
+  ["home", Home, "Inicio", "Resumen operativo"],
+  ["upload", UploadCloud, "Cargar archivo", "Excel diario"],
+  ["loads", FileSpreadsheet, "Cargas", "Versiones"],
+  ["corrections", ClipboardCheck, "Correcciones", "Pendientes"],
+  ["dashboard", BarChart3, "Dashboard", "Gerencia"],
+  ["quality", Gauge, "Calidad", "Dato"],
+  ["equipment", Wrench, "Equipos", "Catálogo"],
+  ["lines", Factory, "Líneas", "Producción"],
+  ["reports", FileDown, "Reportes", "PDF"],
+  ["users", Users, "Usuarios", "Accesos"]
+];
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -57,26 +64,56 @@ function App() {
     api.me().then(setUser).catch(() => null).finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="boot">Cargando sistema...</div>;
+  if (loading) return <div className="boot"><Factory /> Inicializando consola...</div>;
   if (!user) return <Login onLogin={setUser} />;
+
+  const active = nav.find(([id]) => id === view);
 
   return (
     <div className="shell">
       <aside className="sidebar">
-        <div className="brand"><Factory size={28} /><div><strong>Mantto</strong><span>Control interno</span></div></div>
-        <nav>
-          {nav.map(([id, Icon, label]) => {
+        <div className="brand">
+          <div className="brand-mark"><Factory size={24} /></div>
+          <div>
+            <strong>Mantto Control</strong>
+            <span>Planta industrial</span>
+          </div>
+        </div>
+
+        <nav className="side-nav" aria-label="Navegación principal">
+          {nav.map(([id, Icon, label, meta]) => {
             if ((id === "reports" || id === "users") && user.role !== "admin") return null;
-            return <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}><Icon size={18} />{label}</button>;
+            return (
+              <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}>
+                <Icon size={18} />
+                <span>{label}<small>{meta}</small></span>
+              </button>
+            );
           })}
         </nav>
+
         <div className="account">
-          <span>{user.name}</span>
-          <small>{user.role === "admin" ? "Administrador" : "Usuario planta"}</small>
+          <div className="account-avatar">{initials(user.name)}</div>
+          <div>
+            <span>{user.name}</span>
+            <small>{user.role === "admin" ? "Administrador" : "Usuario planta"}</small>
+          </div>
           <button onClick={() => { api.logout(); setUser(null); }}><LogOut size={16} />Salir</button>
         </div>
       </aside>
+
       <main>
+        <div className="topbar">
+          <div>
+            <span className="eyebrow">{active?.[3] || "MVP"}</span>
+            <strong>{active?.[2] || "Mantenimiento"}</strong>
+          </div>
+          <div className="topbar-actions">
+            <span className="live-dot">Sistema activo</span>
+            <span className="role-badge">{user.role === "admin" ? "Admin" : "Planta"}</span>
+          </div>
+        </div>
+
         {view === "home" && <HomePage setView={setView} />}
         {view === "upload" && <UploadPage />}
         {view === "loads" && <LoadsPage />}
@@ -96,6 +133,7 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
   const [email, setEmail] = useState("admin@mantenimiento.local");
   const [password, setPassword] = useState("Admin123!");
   const [error, setError] = useState("");
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -107,48 +145,84 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
       setError((err as Error).message);
     }
   }
+
   return (
     <div className="login">
+      <section className="login-hero">
+        <div className="brand-mark large"><Factory size={34} /></div>
+        <span className="eyebrow">MVP interno</span>
+        <h1>Control de paradas de mantenimiento</h1>
+        <p>Centraliza cargas Excel, valida datos históricos y entrega indicadores gerenciales de tiempo perdido.</p>
+        <div className="login-proof">
+          <span><Database size={16} />Raw + validado</span>
+          <span><ShieldCheck size={16} />Roles y trazabilidad</span>
+          <span><BarChart3 size={16} />Pareto gerencial</span>
+        </div>
+      </section>
       <form onSubmit={submit} className="login-card">
-        <div className="mark"><Factory /></div>
-        <h1>Mantenimiento Industrial</h1>
-        <p>Control de cargas, validación y tablero gerencial.</p>
+        <span className="eyebrow">Acceso seguro</span>
+        <h2>Iniciar sesión</h2>
         <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} /></label>
         <label>Contraseña<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
         {error && <div className="error">{error}</div>}
-        <button className="primary">Entrar</button>
+        <button className="primary">Entrar al sistema</button>
         <small>Admin: admin@mantenimiento.local / Admin123!<br />Planta: planta@mantenimiento.local / Planta123!</small>
       </form>
     </div>
   );
 }
 
-function PageTitle({ title, subtitle }: { title: string; subtitle: string }) {
-  return <header className="page-title"><div><h1>{title}</h1><p>{subtitle}</p></div><Settings size={22} /></header>;
+function PageTitle({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) {
+  return (
+    <header className="page-title">
+      <div>
+        <span className="eyebrow">Mantenimiento industrial</span>
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
+      </div>
+      {action}
+    </header>
+  );
 }
 
 function HomePage({ setView }: { setView: (v: View) => void }) {
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dash, setDash] = useState<any>(null);
   const [quality, setQuality] = useState<any>(null);
+
   useEffect(() => {
     api.request<Upload[]>("/uploads").then(setUploads);
     api.request<any>("/dashboard/summary").then(setDash);
     api.request<any>("/data-quality/summary").then(setQuality);
   }, []);
+
   const last = uploads[0];
+  const kpis = dash?.kpis;
+
   return (
     <>
-      <PageTitle title="Inicio" subtitle="Estado operativo de mantenimiento y calidad del dato." />
-      <section className="hero-panel">
-        <div><span>Última carga</span><strong>{last?.original_filename || "Sin cargas"}</strong><small>{last?.status || "Pendiente de operación"}</small></div>
-        <button className="primary" onClick={() => setView("upload")}><UploadCloud size={18} />Cargar archivo</button>
+      <PageTitle
+        title="Centro de control"
+        subtitle="Estado operativo de cargas, calidad y tiempo perdido validado."
+        action={<button className="primary" onClick={() => setView("upload")}><UploadCloud size={18} />Nueva carga</button>}
+      />
+      <section className="command-panel">
+        <div>
+          <span className="eyebrow">Última carga</span>
+          <h2>{last?.original_filename || "Sin cargas registradas"}</h2>
+          <p>{last ? `${statusLabel(last.status)} · ${last.total_rows} filas leídas · ${last.valid_rows} confirmadas` : "Sube el primer archivo histórico para activar los indicadores."}</p>
+        </div>
+        <div className="command-strip">
+          <span><CheckCircle2 size={18} />{quality?.pending_uploads ?? 0} cargas pendientes</span>
+          <span><AlertTriangle size={18} />{quality?.open_errors ?? 0} errores abiertos</span>
+          <span><Activity size={18} />{formatNumber(kpis?.total_events ?? 0)} eventos validados</span>
+        </div>
       </section>
       <KpiGrid items={[
-        ["Tiempo perdido mes", `${dash?.kpis?.total_minutes ?? 0} min`],
-        ["Equipo crítico", dash?.kpis?.critical_equipment ?? "Sin datos"],
-        ["Registros pendientes", `${quality?.open_errors ?? 0}`],
-        ["Calidad del dato", `${quality?.data_quality_percent ?? 100}%`],
+        ["Tiempo perdido", `${formatNumber(kpis?.total_minutes ?? 0)} min`, `${kpis?.total_hours ?? 0} horas`, "danger"],
+        ["Equipo crítico", kpis?.critical_equipment ?? "Sin datos", "Mayor impacto por tiempo", "warn"],
+        ["Calidad del dato", `${quality?.data_quality_percent ?? 100}%`, "Sobre cargas activas", "good"],
+        ["Frecuencia total", formatNumber(kpis?.total_frequency ?? 0), "Ocurrencias reportadas", "neutral"],
       ]} />
     </>
   );
@@ -159,6 +233,7 @@ function UploadPage() {
   const [result, setResult] = useState<Upload | null>(null);
   const [preview, setPreview] = useState<any[]>([]);
   const [error, setError] = useState("");
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!file) return;
@@ -173,17 +248,26 @@ function UploadPage() {
       setError((err as Error).message);
     }
   }
+
   async function confirm() {
     if (!result) return;
     const updated = await api.request<Upload>(`/uploads/${result.id}/confirm`, { method: "POST" });
     setResult(updated);
   }
+
   return (
     <>
-      <PageTitle title="Cargar archivo" subtitle="Suba el .xlsx diario para validarlo antes de confirmar." />
+      <PageTitle title="Cargar archivo" subtitle="Valida el Excel antes de confirmar datos en el histórico limpio." />
       <form className="upload-box" onSubmit={submit}>
-        <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        <button className="primary"><UploadCloud size={18} />Validar Excel</button>
+        <div className="drop-zone">
+          <UploadCloud size={30} />
+          <div>
+            <strong>{file?.name || "Selecciona un archivo .xlsx"}</strong>
+            <span>Solo Excel, máximo 20 MB. Las columnas extra se ignoran con advertencia.</span>
+          </div>
+          <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        </div>
+        <button className="primary" disabled={!file}><UploadCloud size={18} />Validar Excel</button>
       </form>
       {error && <div className="error">{error}</div>}
       {result && <StatusBand upload={result} onConfirm={confirm} />}
@@ -193,22 +277,50 @@ function UploadPage() {
 }
 
 function StatusBand({ upload, onConfirm }: { upload: Upload; onConfirm: () => void }) {
-  return <div className="status-band"><strong>{upload.status}</strong><span>{upload.total_rows} filas</span><span>{upload.error_rows} errores</span><span>{upload.warning_rows} advertencias</span>{upload.status === "ready_to_confirm" && <button onClick={onConfirm}>Confirmar carga</button>}</div>;
+  return (
+    <div className={`status-band ${upload.status}`}>
+      <strong>{statusLabel(upload.status)}</strong>
+      <span>{formatNumber(upload.total_rows)} filas</span>
+      <span>{formatNumber(upload.valid_rows)} válidas</span>
+      <span>{formatNumber(upload.error_rows)} errores</span>
+      <span>{formatNumber(upload.warning_rows)} advertencias</span>
+      {upload.status === "ready_to_confirm" && <button onClick={onConfirm}>Confirmar carga</button>}
+    </div>
+  );
 }
 
 function PreviewTable({ rows }: { rows: any[] }) {
-  if (!rows.length) return null;
-  return <div className="table-wrap"><table><thead><tr>{["Fila","Fecha","Línea","Turno","Equipo","Daño","Razón","Tiempo","Frecuencia","Estado"].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{rows.map(r => <tr key={r.id} className={r.status}><td>{r.row_number}</td><td>{r.fecha}</td><td>{r.linea}</td><td>{r.turno}</td><td>{r.equipo}</td><td>{r.dano}</td><td>{r.razon}</td><td>{r.tiempo}</td><td>{r.frecuencia}</td><td>{r.status}</td></tr>)}</tbody></table></div>;
+  if (!rows.length) return <EmptyState title="Sin vista previa" text="Cuando subas un archivo válido, aquí aparecerán las primeras filas leídas." />;
+  return (
+    <DataTable
+      headers={["Fila", "Fecha", "Línea", "Turno", "Equipo", "Daño", "Razón", "Tiempo", "Frecuencia", "Estado"]}
+      rows={rows.map((r) => [r.row_number, r.fecha, r.linea, r.turno, r.equipo, r.dano, r.razon, r.tiempo, r.frecuencia, <span className={`pill ${r.status}`}>{statusLabel(r.status)}</span>])}
+    />
+  );
 }
 
 function LoadsPage() {
   const [uploads, setUploads] = useState<Upload[]>([]);
   useEffect(() => { api.request<Upload[]>("/uploads").then(setUploads); }, []);
-  return <><PageTitle title="Cargas" subtitle="Histórico de archivos, versiones y estados." /><UploadTable uploads={uploads} /></>;
+  return <><PageTitle title="Cargas" subtitle="Histórico de archivos, versiones y estados de validación." /><UploadTable uploads={uploads} /></>;
 }
 
 function UploadTable({ uploads }: { uploads: Upload[] }) {
-  return <div className="table-wrap"><table><thead><tr><th>Archivo</th><th>Estado</th><th>Filas</th><th>Válidas</th><th>Errores</th><th>Advertencias</th><th>Fecha</th></tr></thead><tbody>{uploads.map(u => <tr key={u.id}><td>{u.original_filename}</td><td><span className="pill">{u.status}</span></td><td>{u.total_rows}</td><td>{u.valid_rows}</td><td>{u.error_rows}</td><td>{u.warning_rows}</td><td>{new Date(u.uploaded_at).toLocaleString()}</td></tr>)}</tbody></table></div>;
+  if (!uploads.length) return <EmptyState title="No hay cargas" text="Sube el primer archivo Excel para crear histórico." />;
+  return (
+    <DataTable
+      headers={["Archivo", "Estado", "Filas", "Válidas", "Errores", "Advertencias", "Fecha"]}
+      rows={uploads.map((u) => [
+        u.original_filename,
+        <span className={`pill ${u.status}`}>{statusLabel(u.status)}</span>,
+        formatNumber(u.total_rows),
+        formatNumber(u.valid_rows),
+        formatNumber(u.error_rows),
+        formatNumber(u.warning_rows),
+        new Date(u.uploaded_at).toLocaleString()
+      ])}
+    />
+  );
 }
 
 function CorrectionsPage() {
@@ -220,10 +332,25 @@ function CorrectionsPage() {
     await api.request(`/raw-events/${rowId}/correction`, { method: "PATCH", body: JSON.stringify({ equipment_id: Number(equipmentId) }) });
     refresh();
   }
+
   return (
     <>
-      <PageTitle title="Correcciones pendientes" subtitle="El usuario corrige seleccionando equipos existentes; no crea catálogo." />
-      <div className="table-wrap"><table><thead><tr><th>Fila</th><th>Línea</th><th>Equipo original</th><th>Daño</th><th>Corrección</th></tr></thead><tbody>{rows.map(r => <tr key={r.id}><td>{r.row_number}</td><td>{r.linea}</td><td>{r.equipo}</td><td>{r.dano}</td><td><select onChange={(e) => e.target.value && correct(r.id, e.target.value)}><option>Seleccionar equipo</option>{equipment.map(eq => <option key={eq.id} value={eq.id}>{eq.name}</option>)}</select></td></tr>)}</tbody></table></div>
+      <PageTitle title="Correcciones pendientes" subtitle="Corrige equipos usando solo valores existentes del catálogo maestro." />
+      {!rows.length ? <EmptyState title="Sin pendientes" text="No hay registros bloqueantes esperando corrección." /> : (
+        <DataTable
+          headers={["Fila", "Línea", "Equipo original", "Daño", "Corrección"]}
+          rows={rows.map((r) => [
+            r.row_number,
+            r.linea,
+            <span className="pill danger">{r.equipo}</span>,
+            r.dano,
+            <select onChange={(e) => e.target.value && correct(r.id, e.target.value)}>
+              <option>Seleccionar equipo</option>
+              {equipment.map((eq) => <option key={eq.id} value={eq.id}>{eq.name}</option>)}
+            </select>
+          ])}
+        />
+      )}
     </>
   );
 }
@@ -231,25 +358,26 @@ function CorrectionsPage() {
 function DashboardPage() {
   const [data, setData] = useState<any>(null);
   useEffect(() => { api.request<any>("/dashboard/summary").then(setData); }, []);
-  if (!data) return <PageTitle title="Dashboard" subtitle="Cargando indicadores..." />;
+  if (!data) return <PageTitle title="Dashboard" subtitle="Cargando indicadores validados..." />;
+
   return (
     <>
       <PageTitle title="Dashboard gerencial" subtitle="Tiempo perdido vs frecuencia con datos confirmados." />
       <KpiGrid items={[
-        ["Tiempo perdido", `${data.kpis.total_minutes} min`],
-        ["Horas perdidas", `${data.kpis.total_hours} h`],
-        ["Fallas/paradas", data.kpis.total_events],
-        ["Frecuencia total", data.kpis.total_frequency],
-        ["Equipo crítico", data.kpis.critical_equipment],
-        ["Línea crítica", data.kpis.critical_line],
+        ["Tiempo perdido", `${formatNumber(data.kpis.total_minutes)} min`, `${data.kpis.total_hours} horas`, "danger"],
+        ["Fallas/paradas", formatNumber(data.kpis.total_events), "Registros confirmados", "neutral"],
+        ["Frecuencia total", formatNumber(data.kpis.total_frequency), "Ocurrencias", "neutral"],
+        ["Equipo crítico", data.kpis.critical_equipment, "Mayor tiempo perdido", "warn"],
+        ["Línea crítica", data.kpis.critical_line, "Mayor impacto", "warn"],
+        ["Registros validados", formatNumber(data.kpis.validated_records), "Solo clean data", "good"],
       ]} />
       <ChartGrid>
         <Chart title="Tiempo perdido por mes" data={data.downtime_by_month} type="line" />
-        <Chart title="Top equipos por tiempo" data={data.top_equipment_downtime} />
-        <Chart title="Top equipos por frecuencia" data={data.top_equipment_frequency} />
         <Pareto data={data.pareto} />
+        <Chart title="Top 10 equipos por tiempo" data={data.top_equipment_downtime} />
+        <Chart title="Top 10 equipos por frecuencia" data={data.top_equipment_frequency} color="#b45a2b" />
         <ScatterPanel data={data.downtime_vs_frequency} />
-        <Chart title="Distribución por turno" data={data.by_shift} />
+        <Chart title="Distribución por turno" data={data.by_shift} color="#596b4f" />
         <Chart title="Top daños por tiempo" data={data.top_damages} />
         <Chart title="Top razones por tiempo" data={data.top_reasons} />
       </ChartGrid>
@@ -257,30 +385,25 @@ function DashboardPage() {
   );
 }
 
-function KpiGrid({ items }: { items: [string, any][] }) {
-  return <section className="kpis">{items.map(([label, value]) => <article key={label}><span>{label}</span><strong>{value}</strong></article>)}</section>;
-}
-
-function ChartGrid({ children }: { children: React.ReactNode }) {
-  return <section className="chart-grid">{children}</section>;
-}
-
-function Chart({ title, data, type = "bar" }: { title: string; data: any[]; type?: "bar" | "line" }) {
-  return <article className="chart"><h3>{title}</h3><ResponsiveContainer height={260}>{type === "line" ? <LineChart data={data}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" /><YAxis /><Tooltip /><Line dataKey="downtime" stroke="#ffb000" strokeWidth={3} /></LineChart> : <BarChart data={data}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis /><Tooltip /><Bar dataKey="value" fill="#225e63" radius={[4,4,0,0]} /></BarChart>}</ResponsiveContainer></article>;
-}
-
-function Pareto({ data }: { data: any[] }) {
-  return <article className="chart"><h3>Pareto de equipos</h3><ResponsiveContainer height={260}><ComposedChart data={data}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis /><Tooltip /><Legend /><Bar dataKey="value" fill="#225e63" /><Line dataKey="cumulative" stroke="#c24e2d" strokeWidth={3} /></ComposedChart></ResponsiveContainer></article>;
-}
-
-function ScatterPanel({ data }: { data: any[] }) {
-  return <article className="chart"><h3>Tiempo vs frecuencia</h3><ResponsiveContainer height={260}><ScatterChart><CartesianGrid /><XAxis dataKey="frequency" name="Frecuencia" /><YAxis dataKey="downtime" name="Tiempo" /><Tooltip cursor={{ strokeDasharray: "3 3" }} /><Scatter data={data} fill="#c24e2d" /></ScatterChart></ResponsiveContainer></article>;
-}
-
 function QualityPage() {
   const [q, setQ] = useState<any>(null);
   useEffect(() => { api.request<any>("/data-quality/summary").then(setQ); }, []);
-  return <><PageTitle title="Calidad de datos" subtitle="Pendientes, advertencias y errores de captura." />{q && <><KpiGrid items={[["Archivos cargados", q.uploads],["Archivos pendientes", q.pending_uploads],["Errores abiertos", q.open_errors],["Advertencias", q.warnings],["Registros corregidos", q.corrected_records],["Calidad", `${q.data_quality_percent}%`]]} /><ChartGrid><Chart title="Errores por tipo" data={q.errors_by_type.map((x:any) => ({ name: x.type, value: x.count }))} /></ChartGrid></>}</>;
+  return (
+    <>
+      <PageTitle title="Calidad de datos" subtitle="Pendientes, advertencias y trazabilidad de correcciones." />
+      {q && <>
+        <KpiGrid items={[
+          ["Archivos cargados", q.uploads, "Incluye rechazados para auditoría", "neutral"],
+          ["Archivos pendientes", q.pending_uploads, "Requieren acción", q.pending_uploads ? "warn" : "good"],
+          ["Errores abiertos", q.open_errors, "Bloqueantes activos", q.open_errors ? "danger" : "good"],
+          ["Advertencias", formatNumber(q.warnings), "Datos útiles con observación", "warn"],
+          ["Registros corregidos", q.corrected_records, "Trazabilidad aplicada", "neutral"],
+          ["Calidad", `${q.data_quality_percent}%`, "Sobre cargas activas", "good"],
+        ]} />
+        <ChartGrid><Chart title="Alertas por tipo" data={q.errors_by_type.map((x: any) => ({ name: x.type, value: x.count }))} color="#b45a2b" /></ChartGrid>
+      </>}
+    </>
+  );
 }
 
 function EquipmentPage({ user }: { user: User }) {
@@ -290,8 +413,25 @@ function EquipmentPage({ user }: { user: User }) {
   const [lineId, setLineId] = useState("");
   useEffect(() => { refresh(); api.request<ProductionLine[]>("/production-lines").then(setLines); }, []);
   function refresh() { api.request<Equipment[]>("/equipment").then(setItems); }
-  async function create() { await api.request("/equipment", { method: "POST", body: JSON.stringify({ name, production_line_id: Number(lineId), is_active: true }) }); setName(""); refresh(); }
-  return <Catalog title="Equipos" subtitle="Un equipo pertenece a una sola línea." user={user} name={name} setName={setName} canCreate={!!lineId} create={create} extra={<select value={lineId} onChange={e => setLineId(e.target.value)}><option value="">Línea</option>{lines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}</select>} rows={items.map(i => [i.name, lines.find(l => l.id === i.production_line_id)?.name || "-", i.is_active ? "Activo" : "Inactivo"])} />;
+  async function create() {
+    await api.request("/equipment", { method: "POST", body: JSON.stringify({ name, production_line_id: Number(lineId), is_active: true }) });
+    setName("");
+    refresh();
+  }
+  return (
+    <Catalog
+      title="Equipos"
+      subtitle="Catálogo maestro: cada equipo pertenece a una sola línea."
+      user={user}
+      name={name}
+      setName={setName}
+      canCreate={!!lineId}
+      create={create}
+      extra={<select value={lineId} onChange={(e) => setLineId(e.target.value)}><option value="">Línea</option>{lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select>}
+      headers={["Equipo", "Línea", "Estado"]}
+      rows={items.map((i) => [i.name, lines.find((l) => l.id === i.production_line_id)?.name || "-", i.is_active ? "Activo" : "Inactivo"])}
+    />
+  );
 }
 
 function LinesPage({ user }: { user: User }) {
@@ -299,19 +439,49 @@ function LinesPage({ user }: { user: User }) {
   const [name, setName] = useState("");
   useEffect(() => { refresh(); }, []);
   function refresh() { api.request<ProductionLine[]>("/production-lines").then(setItems); }
-  async function create() { await api.request("/production-lines", { method: "POST", body: JSON.stringify({ name, is_active: true }) }); setName(""); refresh(); }
-  return <Catalog title="Líneas" subtitle="Catálogo maestro de líneas de producción." user={user} name={name} setName={setName} create={create} rows={items.map(i => [i.name, i.is_active ? "Activa" : "Inactiva"])} />;
+  async function create() {
+    await api.request("/production-lines", { method: "POST", body: JSON.stringify({ name, is_active: true }) });
+    setName("");
+    refresh();
+  }
+  return (
+    <Catalog
+      title="Líneas"
+      subtitle="Catálogo maestro de líneas de producción."
+      user={user}
+      name={name}
+      setName={setName}
+      create={create}
+      headers={["Línea", "Estado"]}
+      rows={items.map((i) => [i.name, i.is_active ? "Activa" : "Inactiva"])}
+    />
+  );
 }
 
-function Catalog({ title, subtitle, user, name, setName, create, rows, extra, canCreate = true }: any) {
-  return <><PageTitle title={title} subtitle={subtitle} />{user.role === "admin" && <div className="inline-form"><input placeholder="Nombre" value={name} onChange={(e) => setName(e.target.value)} />{extra}<button disabled={!name || !canCreate} onClick={create}>Crear</button></div>}<div className="table-wrap"><table><tbody>{rows.map((r: any[], idx: number) => <tr key={idx}>{r.map(c => <td key={c}>{c}</td>)}</tr>)}</tbody></table></div></>;
+function Catalog({ title, subtitle, user, name, setName, create, rows, headers, extra, canCreate = true }: any) {
+  return (
+    <>
+      <PageTitle title={title} subtitle={subtitle} />
+      {user.role === "admin" && (
+        <div className="inline-form">
+          <input placeholder="Nombre" value={name} onChange={(e) => setName(e.target.value)} />
+          {extra}
+          <button disabled={!name || !canCreate} onClick={create}>Crear</button>
+        </div>
+      )}
+      <DataTable headers={headers} rows={rows} />
+    </>
+  );
 }
 
 function ReportsPage() {
   const [reports, setReports] = useState<any[]>([]);
   useEffect(() => { refresh(); }, []);
   function refresh() { api.request<any[]>("/reports").then(setReports); }
-  async function generate() { await api.request("/reports/management-pdf", { method: "POST", body: JSON.stringify({}) }); refresh(); }
+  async function generate() {
+    await api.request("/reports/management-pdf", { method: "POST", body: JSON.stringify({}) });
+    refresh();
+  }
   async function download(id: number, filename: string) {
     const response = await fetch(`${API_URL}/reports/${id}/download`, { headers: { Authorization: `Bearer ${api.token}` } });
     const blob = await response.blob();
@@ -322,13 +492,157 @@ function ReportsPage() {
     a.click();
     URL.revokeObjectURL(url);
   }
-  return <><PageTitle title="Reportes" subtitle="PDF gerencial disponible solo para administradores." /><button className="primary" onClick={generate}><FileDown size={18} />Generar PDF</button><div className="table-wrap"><table><tbody>{reports.map(r => <tr key={r.id}><td>{r.file_path}</td><td>{new Date(r.created_at).toLocaleString()}</td><td><button onClick={() => download(r.id, r.file_path)}>Descargar</button></td></tr>)}</tbody></table></div></>;
+  return (
+    <>
+      <PageTitle title="Reportes" subtitle="PDF gerencial disponible solo para administradores." action={<button className="primary" onClick={generate}><FileDown size={18} />Generar PDF</button>} />
+      {!reports.length ? <EmptyState title="Sin reportes" text="Genera el primer PDF gerencial desde datos confirmados." /> : (
+        <DataTable
+          headers={["Archivo", "Fecha", "Acción"]}
+          rows={reports.map((r) => [r.file_path, new Date(r.created_at).toLocaleString(), <button className="text-button" onClick={() => download(r.id, r.file_path)}>Descargar</button>])}
+        />
+      )}
+    </>
+  );
 }
 
 function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   useEffect(() => { api.request<User[]>("/users").then(setUsers); }, []);
-  return <><PageTitle title="Usuarios" subtitle="Administración básica de accesos." /><div className="table-wrap"><table><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th></tr></thead><tbody>{users.map(u => <tr key={u.id}><td>{u.name}</td><td>{u.email}</td><td>{u.role}</td><td>{u.is_active ? "Activo" : "Inactivo"}</td></tr>)}</tbody></table></div></>;
+  return (
+    <>
+      <PageTitle title="Usuarios" subtitle="Administración básica de accesos y roles." />
+      <DataTable
+        headers={["Nombre", "Email", "Rol", "Estado"]}
+        rows={users.map((u) => [u.name, u.email, u.role === "admin" ? "Administrador" : "Usuario planta", u.is_active ? "Activo" : "Inactivo"])}
+      />
+    </>
+  );
+}
+
+function KpiGrid({ items }: { items: KpiItem[] }) {
+  return (
+    <section className="kpis">
+      {items.map(([label, value, hint, tone = "neutral"]) => (
+        <article key={label} className={`kpi ${tone}`}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+          {hint && <small>{hint}</small>}
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function ChartGrid({ children }: { children: React.ReactNode }) {
+  return <section className="chart-grid">{children}</section>;
+}
+
+function Chart({ title, data, type = "bar", color = "#254f55" }: { title: string; data: any[]; type?: "bar" | "line"; color?: string }) {
+  return (
+    <article className="chart">
+      <h3>{title}</h3>
+      <ResponsiveContainer height={280}>
+        {type === "line" ? (
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#d9ded6" />
+            <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip />
+            <Line dataKey="downtime" stroke="#c98324" strokeWidth={3} dot={false} />
+          </LineChart>
+        ) : (
+          <BarChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#d9ded6" />
+            <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip />
+            <Bar dataKey="value" fill={color} radius={[5, 5, 0, 0]} />
+          </BarChart>
+        )}
+      </ResponsiveContainer>
+    </article>
+  );
+}
+
+function Pareto({ data }: { data: any[] }) {
+  return (
+    <article className="chart">
+      <h3>Pareto de equipos</h3>
+      <ResponsiveContainer height={280}>
+        <ComposedChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#d9ded6" />
+          <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+          <YAxis tick={{ fontSize: 11 }} />
+          <Tooltip />
+          <Legend />
+          <Bar dataKey="value" fill="#254f55" radius={[5, 5, 0, 0]} />
+          <Line dataKey="cumulative" stroke="#b45a2b" strokeWidth={3} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </article>
+  );
+}
+
+function ScatterPanel({ data }: { data: any[] }) {
+  return (
+    <article className="chart">
+      <h3>Tiempo vs frecuencia</h3>
+      <ResponsiveContainer height={280}>
+        <ScatterChart>
+          <CartesianGrid stroke="#d9ded6" />
+          <XAxis dataKey="frequency" name="Frecuencia" tick={{ fontSize: 11 }} />
+          <YAxis dataKey="downtime" name="Tiempo" tick={{ fontSize: 11 }} />
+          <Tooltip cursor={{ strokeDasharray: "3 3" }} />
+          <Scatter data={data} fill="#b45a2b" />
+        </ScatterChart>
+      </ResponsiveContainer>
+    </article>
+  );
+}
+
+function DataTable({ headers, rows }: { headers: React.ReactNode[]; rows: React.ReactNode[][] }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead><tr>{headers.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+        <tbody>{rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function EmptyState({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="empty-state">
+      <Clock3 size={24} />
+      <strong>{title}</strong>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function statusLabel(status: string) {
+  const labels: Record<string, string> = {
+    uploaded: "Subida",
+    validation_failed: "Validación fallida",
+    pending_corrections: "Pendiente de corrección",
+    ready_to_confirm: "Lista para confirmar",
+    confirmed: "Confirmada",
+    rejected: "Rechazada",
+    valid: "Válido",
+    warning: "Advertencia",
+    pending_correction: "Pendiente"
+  };
+  return labels[status] || status;
+}
+
+function formatNumber(value: number | string) {
+  const number = Number(value);
+  return Number.isFinite(number) ? new Intl.NumberFormat("es-CO").format(number) : value;
+}
+
+function initials(name: string) {
+  return name.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase();
 }
 
 createRoot(document.getElementById("root")!).render(<App />);
