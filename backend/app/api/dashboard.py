@@ -6,10 +6,11 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
 from app.core.database import get_db
-from app.models import Equipment, MaintenanceEvent, ProductionLine, Shift, UploadedFile, User, ValidationError
+from app.models import AuditLog, Equipment, MaintenanceEvent, ProductionLine, Shift, UploadedFile, User, ValidationError
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 quality_router = APIRouter(prefix="/data-quality", tags=["data-quality"])
+audit_router = APIRouter(prefix="/audit-logs", tags=["audit"])
 
 
 def _filtered(db: Session, date_from: date | None, date_to: date | None, year: int | None, month: int | None, production_line_id: int | None, equipment_id: int | None, shift_id: int | None):
@@ -95,6 +96,19 @@ def dashboard_summary(
     }
 
 
+@router.get("/filters")
+def dashboard_filters(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    years = [row[0] for row in db.query(MaintenanceEvent.year).distinct().order_by(MaintenanceEvent.year).all()]
+    months = [row[0] for row in db.query(MaintenanceEvent.month).distinct().order_by(MaintenanceEvent.month).all()]
+    return {
+        "years": years,
+        "months": months,
+        "lines": [{"id": line.id, "name": line.name} for line in db.query(ProductionLine).filter(ProductionLine.is_active.is_(True)).order_by(ProductionLine.name).all()],
+        "equipment": [{"id": item.id, "name": item.name, "production_line_id": item.production_line_id} for item in db.query(Equipment).filter(Equipment.is_active.is_(True)).order_by(Equipment.name).all()],
+        "shifts": [{"id": shift.id, "name": shift.name} for shift in db.query(Shift).filter(Shift.is_active.is_(True)).order_by(Shift.name).all()],
+    }
+
+
 @quality_router.get("/summary")
 def quality_summary(_: User = Depends(current_user), db: Session = Depends(get_db)):
     uploads = db.query(UploadedFile).count()
@@ -122,3 +136,45 @@ def quality_summary(_: User = Depends(current_user), db: Session = Depends(get_d
         "data_quality_percent": quality,
         "errors_by_type": [{"type": t, "count": c} for t, c in by_type],
     }
+
+
+@quality_router.get("/pending-records")
+def quality_pending_records(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = (
+        db.query(ValidationError)
+        .join(UploadedFile, UploadedFile.id == ValidationError.uploaded_file_id)
+        .filter(UploadedFile.status != "rejected", ValidationError.status == "open")
+        .order_by(ValidationError.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "uploaded_file_id": row.uploaded_file_id,
+            "raw_event_id": row.raw_event_id,
+            "field_name": row.field_name,
+            "error_type": row.error_type,
+            "severity": row.severity,
+            "message": row.error_message,
+        }
+        for row in rows
+    ]
+
+
+@audit_router.get("")
+def list_audit_logs(limit: int = 200, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.query(AuditLog).order_by(AuditLog.created_at.desc()).limit(min(limit, 1000)).all()
+    return [
+        {
+            "id": row.id,
+            "user_id": row.user_id,
+            "entity_type": row.entity_type,
+            "entity_id": row.entity_id,
+            "action": row.action,
+            "before_json": row.before_json,
+            "after_json": row.after_json,
+            "created_at": row.created_at,
+        }
+        for row in rows
+    ]

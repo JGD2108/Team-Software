@@ -1,4 +1,4 @@
-import hashlib
+﻿import hashlib
 import json
 import math
 from datetime import datetime
@@ -293,7 +293,29 @@ def process_upload(db: Session, upload_file: UploadFile, user: User, selected_sh
     return record
 
 
-def apply_correction(db: Session, raw: RawMaintenanceEvent, user: User, production_line_id: int | None, equipment_id: int | None, shift_name: str | None):
+def apply_correction(
+    db: Session,
+    raw: RawMaintenanceEvent,
+    user: User,
+    production_line_id: int | None = None,
+    equipment_id: int | None = None,
+    shift_name: str | None = None,
+    damage_description: str | None = None,
+    reason_description: str | None = None,
+    downtime_minutes: float | None = None,
+    frequency: float | None = None,
+    event_date=None,
+):
+    before = {
+        "fecha": raw.raw_fecha,
+        "linea": raw.raw_linea,
+        "turno": raw.raw_turno,
+        "equipo": raw.raw_equipo,
+        "dano": raw.raw_dano,
+        "razon": raw.raw_razon,
+        "tiempo": raw.raw_tiempo,
+        "frecuencia": raw.raw_frecuencia,
+    }
     if production_line_id:
         line = db.get(ProductionLine, production_line_id)
         if not line or not line.is_active:
@@ -307,14 +329,46 @@ def apply_correction(db: Session, raw: RawMaintenanceEvent, user: User, producti
         if not production_line_id:
             raw.raw_linea = equip.production_line.name
     if shift_name is not None:
-        raw.raw_turno = shift_name.strip()
+        raw.raw_turno = shift_name.strip() or None
+    if damage_description is not None:
+        raw.raw_dano = damage_description.strip()
+    if reason_description is not None:
+        raw.raw_razon = reason_description.strip()
+    if downtime_minutes is not None:
+        if downtime_minutes < 0:
+            raise HTTPException(status_code=400, detail="TIEMPO debe ser mayor o igual a 0")
+        raw.raw_tiempo = str(downtime_minutes)
+    if frequency is not None:
+        if frequency < 1:
+            raise HTTPException(status_code=400, detail="FRECUENCIA debe ser mayor o igual a 1")
+        raw.raw_frecuencia = str(frequency)
+    if event_date is not None:
+        raw.raw_fecha = event_date.isoformat()
+        raw.raw_anio = str(event_date.year)
+        raw.raw_mes = str(event_date.month)
     db.query(ValidationError).filter(ValidationError.raw_event_id == raw.id, ValidationError.severity == "error").update(
         {"status": "resolved", "resolved_by_user_id": user.id, "resolved_at": datetime.utcnow()}
     )
     raw.validation_status = "warning"
     raw.validation_errors_json = "[]"
-    log_action(db, user, "raw_maintenance_event", "correct", raw.id, after={"line": raw.raw_linea, "equipment": raw.raw_equipo})
-
+    log_action(
+        db,
+        user,
+        "raw_maintenance_event",
+        "correct",
+        raw.id,
+        before=before,
+        after={
+            "fecha": raw.raw_fecha,
+            "linea": raw.raw_linea,
+            "turno": raw.raw_turno,
+            "equipo": raw.raw_equipo,
+            "dano": raw.raw_dano,
+            "razon": raw.raw_razon,
+            "tiempo": raw.raw_tiempo,
+            "frecuencia": raw.raw_frecuencia,
+        },
+    )
 
 def confirm_upload(db: Session, upload: UploadedFile, user: User):
     open_errors = db.query(ValidationError).filter(
@@ -366,3 +420,4 @@ def confirm_upload(db: Session, upload: UploadedFile, user: User):
     upload.confirmed_at = datetime.utcnow()
     upload.confirmed_by_user_id = user.id
     log_action(db, user, "uploaded_file", "confirm", upload.id, after={"events": created})
+

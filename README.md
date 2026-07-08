@@ -1,6 +1,6 @@
 # MVP Mantenimiento Industrial
 
-MVP web para carga manual de Excel, validación, trazabilidad, dashboards y reportes PDF de mantenimiento.
+Aplicación web interna para reemplazar el flujo manual de consolidación Excel en mantenimiento industrial. El MVP cubre carga manual `.xlsx`, validación, trazabilidad, correcciones controladas, dashboards gerenciales, calidad de datos y reportes PDF para administradores.
 
 ## Usuarios Seed
 
@@ -10,12 +10,14 @@ MVP web para carga manual de Excel, validación, trazabilidad, dashboards y repo
 ## Ejecutar Con Docker
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
 - Frontend: http://localhost:5173
 - Backend: http://localhost:8001
 - API docs: http://localhost:8001/docs
+
+La base de datos PostgreSQL corre dentro de Docker sin publicar el puerto `5432`, para evitar conflictos con instalaciones locales.
 
 ## Ejecutar Local Sin Docker
 
@@ -48,8 +50,22 @@ El archivo se genera en `samples/carga_mantenimiento_ejemplo.xlsx`.
 
 ```bash
 cd backend
-python -m pytest
+python -m pytest app/tests
+
+cd ../frontend
+npm run build
 ```
+
+## Migraciones
+
+El esquema inicial está documentado en Alembic:
+
+```bash
+cd backend
+alembic upgrade head
+```
+
+En el modo Docker actual, la app crea tablas al iniciar para facilitar el MVP local.
 
 ## Documentación
 

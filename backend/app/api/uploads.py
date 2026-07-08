@@ -134,7 +134,19 @@ def correct_raw_event(raw_event_id: int, payload: CorrectionIn, user: User = Dep
     raw = db.get(RawMaintenanceEvent, raw_event_id)
     if not raw:
         raise HTTPException(status_code=404, detail="Registro raw no encontrado")
-    apply_correction(db, raw, user, payload.production_line_id, payload.equipment_id, payload.shift_name)
+    apply_correction(
+        db,
+        raw,
+        user,
+        production_line_id=payload.production_line_id,
+        equipment_id=payload.equipment_id,
+        shift_name=payload.shift_name,
+        damage_description=payload.damage_description,
+        reason_description=payload.reason_description,
+        downtime_minutes=payload.downtime_minutes,
+        frequency=payload.frequency,
+        event_date=payload.event_date,
+    )
     upload = db.get(UploadedFile, raw.uploaded_file_id)
     if upload:
         open_errors = db.query(ValidationError).filter(ValidationError.uploaded_file_id == upload.id, ValidationError.severity == "error", ValidationError.status == "open").count()

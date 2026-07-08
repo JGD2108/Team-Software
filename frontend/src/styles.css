@@ -175,11 +175,39 @@ input:focus, select:focus {
 .status-band button:hover { background: var(--steel-dark); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 
+.secondary {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--steel-dark);
+  background: #fffdf7;
+  font-weight: 800;
+}
+
 .text-button {
   color: var(--steel);
   background: transparent;
   font-weight: 800;
   padding: 0;
+}
+
+.action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.action-group button {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--steel-dark);
+  background: rgba(37,79,85,.12);
+  font-weight: 800;
 }
 
 .error {
@@ -445,6 +473,24 @@ main {
   background: rgba(255,253,247,.92);
 }
 
+.inline-form.compact {
+  margin-bottom: 12px;
+  padding: 12px;
+}
+
+.filter-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255,253,247,.92);
+}
+
+.filter-bar label { margin: 0; }
+
 .drop-zone {
   flex: 1;
   min-width: 280px;
@@ -604,6 +650,7 @@ td { color: #25312f; font-size: 14px; }
   main { padding: 18px; }
   .topbar, .page-title { flex-direction: column; align-items: stretch; }
   .chart-grid { grid-template-columns: 1fr; }
+  .filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 560px) {
@@ -612,4 +659,5 @@ td { color: #25312f; font-size: 14px; }
   .login-hero h1 { font-size: 42px; }
   .page-title h1 { font-size: 36px; }
   .drop-zone { grid-template-columns: 1fr; }
+  .filter-bar { grid-template-columns: 1fr; }
 }

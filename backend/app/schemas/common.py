@@ -15,6 +15,14 @@ class UserCreate(BaseModel):
     role: str = "plant_user"
 
 
+class UserUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    password: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -77,6 +85,11 @@ class CorrectionIn(BaseModel):
     production_line_id: int | None = None
     equipment_id: int | None = None
     shift_name: str | None = None
+    damage_description: str | None = None
+    reason_description: str | None = None
+    downtime_minutes: float | None = None
+    frequency: float | None = None
+    event_date: date | None = None
 
 
 class DashboardFilters(BaseModel):

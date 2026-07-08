@@ -25,6 +25,7 @@ app.include_router(uploads.router)
 app.include_router(uploads.corrections_router)
 app.include_router(dashboard.router)
 app.include_router(dashboard.quality_router)
+app.include_router(dashboard.audit_router)
 app.include_router(reports.router)
 
 

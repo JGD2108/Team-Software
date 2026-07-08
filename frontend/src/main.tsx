@@ -41,6 +41,25 @@ type View = "home" | "upload" | "loads" | "corrections" | "dashboard" | "quality
 type NavItem = readonly [View, React.ElementType, string, string];
 type KpiTone = "good" | "warn" | "danger" | "neutral";
 type KpiItem = [string, React.ReactNode, string?, KpiTone?];
+type FilterState = {
+  date_from: string;
+  date_to: string;
+  year: string;
+  month: string;
+  production_line_id: string;
+  equipment_id: string;
+  shift_id: string;
+};
+
+const emptyFilters: FilterState = {
+  date_from: "",
+  date_to: "",
+  year: "",
+  month: "",
+  production_line_id: "",
+  equipment_id: "",
+  shift_id: "",
+};
 
 const nav: readonly NavItem[] = [
   ["home", Home, "Inicio", "Resumen operativo"],
@@ -357,12 +376,25 @@ function CorrectionsPage() {
 
 function DashboardPage() {
   const [data, setData] = useState<any>(null);
-  useEffect(() => { api.request<any>("/dashboard/summary").then(setData); }, []);
+  const [options, setOptions] = useState<any>(null);
+  const [filters, setFilters] = useState<FilterState>(emptyFilters);
+  useEffect(() => {
+    api.request<any>("/dashboard/filters").then(setOptions);
+    loadDashboard(filters);
+  }, []);
+  function loadDashboard(nextFilters: FilterState) {
+    api.request<any>(`/dashboard/summary${queryString(nextFilters)}`).then(setData);
+  }
+  function applyFilters(e: React.FormEvent) {
+    e.preventDefault();
+    loadDashboard(filters);
+  }
   if (!data) return <PageTitle title="Dashboard" subtitle="Cargando indicadores validados..." />;
 
   return (
     <>
       <PageTitle title="Dashboard gerencial" subtitle="Tiempo perdido vs frecuencia con datos confirmados." />
+      <FilterBar filters={filters} setFilters={setFilters} options={options} onSubmit={applyFilters} />
       <KpiGrid items={[
         ["Tiempo perdido", `${formatNumber(data.kpis.total_minutes)} min`, `${data.kpis.total_hours} horas`, "danger"],
         ["Fallas/paradas", formatNumber(data.kpis.total_events), "Registros confirmados", "neutral"],
@@ -406,16 +438,44 @@ function QualityPage() {
   );
 }
 
+function FilterBar({ filters, setFilters, options, onSubmit }: { filters: FilterState; setFilters: (filters: FilterState) => void; options: any; onSubmit: (e: React.FormEvent) => void }) {
+  const set = (key: keyof FilterState, value: string) => setFilters({ ...filters, [key]: value });
+  return (
+    <form className="filter-bar" onSubmit={onSubmit}>
+      <label>Desde<input type="date" value={filters.date_from} onChange={(e) => set("date_from", e.target.value)} /></label>
+      <label>Hasta<input type="date" value={filters.date_to} onChange={(e) => set("date_to", e.target.value)} /></label>
+      <label>Año<select value={filters.year} onChange={(e) => set("year", e.target.value)}><option value="">Todos</option>{options?.years?.map((year: number) => <option key={year} value={year}>{year}</option>)}</select></label>
+      <label>Mes<select value={filters.month} onChange={(e) => set("month", e.target.value)}><option value="">Todos</option>{options?.months?.map((month: number) => <option key={month} value={month}>{month}</option>)}</select></label>
+      <label>Línea<select value={filters.production_line_id} onChange={(e) => set("production_line_id", e.target.value)}><option value="">Todas</option>{options?.lines?.map((line: any) => <option key={line.id} value={line.id}>{line.name}</option>)}</select></label>
+      <label>Equipo<select value={filters.equipment_id} onChange={(e) => set("equipment_id", e.target.value)}><option value="">Todos</option>{options?.equipment?.filter((item: any) => !filters.production_line_id || String(item.production_line_id) === filters.production_line_id).map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <label>Turno<select value={filters.shift_id} onChange={(e) => set("shift_id", e.target.value)}><option value="">Todos</option>{options?.shifts?.map((shift: any) => <option key={shift.id} value={shift.id}>{shift.name}</option>)}</select></label>
+      <button className="primary">Aplicar filtros</button>
+      <button type="button" className="secondary" onClick={() => setFilters(emptyFilters)}>Limpiar</button>
+    </form>
+  );
+}
+
 function EquipmentPage({ user }: { user: User }) {
   const [items, setItems] = useState<Equipment[]>([]);
   const [lines, setLines] = useState<ProductionLine[]>([]);
   const [name, setName] = useState("");
   const [lineId, setLineId] = useState("");
-  useEffect(() => { refresh(); api.request<ProductionLine[]>("/production-lines").then(setLines); }, []);
-  function refresh() { api.request<Equipment[]>("/equipment").then(setItems); }
+  const [search, setSearch] = useState("");
+  useEffect(() => { refresh(); api.request<ProductionLine[]>("/production-lines?include_inactive=true").then(setLines); }, []);
+  function refresh(nextSearch = search) { api.request<Equipment[]>(`/equipment${queryString({ include_inactive: true, search: nextSearch })}`).then(setItems); }
   async function create() {
     await api.request("/equipment", { method: "POST", body: JSON.stringify({ name, production_line_id: Number(lineId), is_active: true }) });
     setName("");
+    refresh();
+  }
+  async function rename(item: Equipment) {
+    const next = window.prompt("Nuevo nombre del equipo", item.name);
+    if (!next || !next.trim()) return;
+    await api.request(`/equipment/${item.id}`, { method: "PATCH", body: JSON.stringify({ name: next.trim(), production_line_id: item.production_line_id, is_active: item.is_active }) });
+    refresh();
+  }
+  async function toggle(item: Equipment) {
+    await api.request(`/equipment/${item.id}/${item.is_active ? "deactivate" : "activate"}`, { method: "PATCH" });
     refresh();
   }
   return (
@@ -427,9 +487,16 @@ function EquipmentPage({ user }: { user: User }) {
       setName={setName}
       canCreate={!!lineId}
       create={create}
+      search={search}
+      onSearch={(value: string) => { setSearch(value); refresh(value); }}
       extra={<select value={lineId} onChange={(e) => setLineId(e.target.value)}><option value="">Línea</option>{lines.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select>}
-      headers={["Equipo", "Línea", "Estado"]}
-      rows={items.map((i) => [i.name, lines.find((l) => l.id === i.production_line_id)?.name || "-", i.is_active ? "Activo" : "Inactivo"])}
+      headers={["Equipo", "Línea", "Estado", "Acciones"]}
+      rows={items.map((i) => [
+        i.name,
+        lines.find((l) => l.id === i.production_line_id)?.name || "-",
+        <span className={`pill ${i.is_active ? "good" : "danger"}`}>{i.is_active ? "Activo" : "Inactivo"}</span>,
+        user.role === "admin" ? <ActionGroup><button onClick={() => rename(i)}>Renombrar</button><button onClick={() => toggle(i)}>{i.is_active ? "Desactivar" : "Activar"}</button></ActionGroup> : "-"
+      ])}
     />
   );
 }
@@ -437,11 +504,22 @@ function EquipmentPage({ user }: { user: User }) {
 function LinesPage({ user }: { user: User }) {
   const [items, setItems] = useState<ProductionLine[]>([]);
   const [name, setName] = useState("");
+  const [search, setSearch] = useState("");
   useEffect(() => { refresh(); }, []);
-  function refresh() { api.request<ProductionLine[]>("/production-lines").then(setItems); }
+  function refresh(nextSearch = search) { api.request<ProductionLine[]>(`/production-lines${queryString({ include_inactive: true, search: nextSearch })}`).then(setItems); }
   async function create() {
     await api.request("/production-lines", { method: "POST", body: JSON.stringify({ name, is_active: true }) });
     setName("");
+    refresh();
+  }
+  async function rename(item: ProductionLine) {
+    const next = window.prompt("Nuevo nombre de la línea", item.name);
+    if (!next || !next.trim()) return;
+    await api.request(`/production-lines/${item.id}`, { method: "PATCH", body: JSON.stringify({ name: next.trim(), is_active: item.is_active }) });
+    refresh();
+  }
+  async function toggle(item: ProductionLine) {
+    await api.request(`/production-lines/${item.id}/${item.is_active ? "deactivate" : "activate"}`, { method: "PATCH" });
     refresh();
   }
   return (
@@ -452,16 +530,25 @@ function LinesPage({ user }: { user: User }) {
       name={name}
       setName={setName}
       create={create}
-      headers={["Línea", "Estado"]}
-      rows={items.map((i) => [i.name, i.is_active ? "Activa" : "Inactiva"])}
+      search={search}
+      onSearch={(value: string) => { setSearch(value); refresh(value); }}
+      headers={["Línea", "Estado", "Acciones"]}
+      rows={items.map((i) => [
+        i.name,
+        <span className={`pill ${i.is_active ? "good" : "danger"}`}>{i.is_active ? "Activa" : "Inactiva"}</span>,
+        user.role === "admin" ? <ActionGroup><button onClick={() => rename(i)}>Renombrar</button><button onClick={() => toggle(i)}>{i.is_active ? "Desactivar" : "Activar"}</button></ActionGroup> : "-"
+      ])}
     />
   );
 }
 
-function Catalog({ title, subtitle, user, name, setName, create, rows, headers, extra, canCreate = true }: any) {
+function Catalog({ title, subtitle, user, name, setName, create, rows, headers, extra, canCreate = true, search = "", onSearch }: any) {
   return (
     <>
       <PageTitle title={title} subtitle={subtitle} />
+      <div className="inline-form compact">
+        <input placeholder="Buscar" value={search} onChange={(e) => onSearch?.(e.target.value)} />
+      </div>
       {user.role === "admin" && (
         <div className="inline-form">
           <input placeholder="Nombre" value={name} onChange={(e) => setName(e.target.value)} />
@@ -476,10 +563,21 @@ function Catalog({ title, subtitle, user, name, setName, create, rows, headers, 
 
 function ReportsPage() {
   const [reports, setReports] = useState<any[]>([]);
-  useEffect(() => { refresh(); }, []);
+  const [options, setOptions] = useState<any>(null);
+  const [filters, setFilters] = useState<FilterState>(emptyFilters);
+  useEffect(() => { refresh(); api.request<any>("/dashboard/filters").then(setOptions); }, []);
   function refresh() { api.request<any[]>("/reports").then(setReports); }
   async function generate() {
-    await api.request("/reports/management-pdf", { method: "POST", body: JSON.stringify({}) });
+    await api.request("/reports/management-pdf", {
+      method: "POST",
+      body: JSON.stringify(compactPayload({
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        production_line_id: filters.production_line_id ? Number(filters.production_line_id) : undefined,
+        equipment_id: filters.equipment_id ? Number(filters.equipment_id) : undefined,
+        shift_id: filters.shift_id ? Number(filters.shift_id) : undefined,
+      }))
+    });
     refresh();
   }
   async function download(id: number, filename: string) {
@@ -495,6 +593,7 @@ function ReportsPage() {
   return (
     <>
       <PageTitle title="Reportes" subtitle="PDF gerencial disponible solo para administradores." action={<button className="primary" onClick={generate}><FileDown size={18} />Generar PDF</button>} />
+      <FilterBar filters={filters} setFilters={setFilters} options={options} onSubmit={(e) => e.preventDefault()} />
       {!reports.length ? <EmptyState title="Sin reportes" text="Genera el primer PDF gerencial desde datos confirmados." /> : (
         <DataTable
           headers={["Archivo", "Fecha", "Acción"]}
@@ -507,13 +606,46 @@ function ReportsPage() {
 
 function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
-  useEffect(() => { api.request<User[]>("/users").then(setUsers); }, []);
+  const [form, setForm] = useState({ name: "", email: "", password: "", role: "plant_user" });
+  useEffect(() => { refresh(); }, []);
+  function refresh() { api.request<User[]>("/users").then(setUsers); }
+  function setField(field: keyof typeof form, value: string) { setForm({ ...form, [field]: value }); }
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    await api.request("/users", { method: "POST", body: JSON.stringify(form) });
+    setForm({ name: "", email: "", password: "", role: "plant_user" });
+    refresh();
+  }
+  async function toggle(user: User) {
+    await api.request(`/users/${user.id}/${user.is_active ? "deactivate" : "activate"}`, { method: "PATCH" });
+    refresh();
+  }
+  async function changeRole(user: User, role: string) {
+    await api.request(`/users/${user.id}`, { method: "PATCH", body: JSON.stringify({ role }) });
+    refresh();
+  }
   return (
     <>
       <PageTitle title="Usuarios" subtitle="Administración básica de accesos y roles." />
+      <form className="inline-form" onSubmit={create}>
+        <input placeholder="Nombre" value={form.name} onChange={(e) => setField("name", e.target.value)} />
+        <input placeholder="Email" value={form.email} onChange={(e) => setField("email", e.target.value)} />
+        <input placeholder="Contraseña temporal" type="password" value={form.password} onChange={(e) => setField("password", e.target.value)} />
+        <select value={form.role} onChange={(e) => setField("role", e.target.value)}>
+          <option value="plant_user">Usuario planta</option>
+          <option value="admin">Administrador</option>
+        </select>
+        <button disabled={!form.name || !form.email || !form.password}>Crear usuario</button>
+      </form>
       <DataTable
-        headers={["Nombre", "Email", "Rol", "Estado"]}
-        rows={users.map((u) => [u.name, u.email, u.role === "admin" ? "Administrador" : "Usuario planta", u.is_active ? "Activo" : "Inactivo"])}
+        headers={["Nombre", "Email", "Rol", "Estado", "Acciones"]}
+        rows={users.map((u) => [
+          u.name,
+          u.email,
+          <select value={u.role} onChange={(e) => changeRole(u, e.target.value)}><option value="plant_user">Usuario planta</option><option value="admin">Administrador</option></select>,
+          <span className={`pill ${u.is_active ? "good" : "danger"}`}>{u.is_active ? "Activo" : "Inactivo"}</span>,
+          <ActionGroup><button onClick={() => toggle(u)}>{u.is_active ? "Desactivar" : "Activar"}</button></ActionGroup>
+        ])}
       />
     </>
   );
@@ -611,6 +743,10 @@ function DataTable({ headers, rows }: { headers: React.ReactNode[]; rows: React.
   );
 }
 
+function ActionGroup({ children }: { children: React.ReactNode }) {
+  return <div className="action-group">{children}</div>;
+}
+
 function EmptyState({ title, text }: { title: string; text: string }) {
   return (
     <div className="empty-state">
@@ -639,6 +775,19 @@ function statusLabel(status: string) {
 function formatNumber(value: number | string) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat("es-CO").format(number) : value;
+}
+
+function queryString(filters: Record<string, string | number | boolean | undefined | null>) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value) !== "") params.set(key, String(value));
+  });
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+function compactPayload(payload: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined && value !== null && value !== ""));
 }
 
 function initials(name: string) {
