@@ -80,6 +80,13 @@ export function PmpDashboard({
   const areaRows = Object.entries(dashboard.metrics.by_area).map(([area, value]) => ({ area, ...value }));
   const capacityRows = dashboard.capacity.rows;
   const set = (key: keyof PmpFilters, value: string) => onFiltersChange({ ...filters, [key]: value });
+  const activeFilterLabels = [
+    filters.area ? `Área ${filters.area}` : "Todas las áreas",
+    filters.status === "pending" ? "Pendientes" : filters.status === "finalized" ? "Finalizadas" : "Todos los estados",
+    filters.date_from || filters.date_to ? `Fecha ${filters.date_from || "inicial"}–${filters.date_to || "final"}` : "Todas las fechas",
+    filters.shift ? `Turno ${filters.shift}` : "Todos los turnos",
+  ];
+  const hasOperationalFilters = Boolean(filters.area || filters.status || filters.date_from || filters.date_to || filters.shift);
   const capacityUnavailable = !dashboard.capacity.configured;
   const unitLabel = filters.unit === "orders" ? "órdenes" : filters.unit === "minutes" ? "minutos" : "horas";
   const displayWork = (metric: PmpMetric, name: "planned" | "completed" | "pending") => {
@@ -100,11 +107,12 @@ export function PmpDashboard({
         <p>La meta se cumple únicamente al superar 90% de la carga planeada. La fecha de corte usa <strong>FechaPlaneadaInicio</strong> de la fuente, no una fecha inventada.</p>
       </div>
       <div className={`pmp-hero-status ${metrics.traffic_light}`}>
-        <Gauge size={24} /><span>Estado de meta</span><strong>{metrics.workload_completion_percent.toFixed(2)}%</strong><StatusChip metric={metrics} />
+        <Gauge size={24} /><span>Estado de meta del alcance</span><strong>{metrics.workload_completion_percent.toFixed(2)}%</strong><StatusChip metric={metrics} /><small>{activeFilterLabels.join(" · ")}</small>
       </div>
     </section>
 
     <section className="pmp-filter-panel" aria-label="Filtros PMP">
+      {hasOperationalFilters && <button type="button" className="secondary" onClick={() => onFiltersChange({ ...filters, area: "", status: "", date_from: "", date_to: "", shift: "" })}>Limpiar filtros</button>}
       <label>Área<select aria-label="Área" value={filters.area} onChange={(e) => set("area", e.target.value)}><option value="">Todas las áreas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select></label>
       <label>Estado<select aria-label="Estado" value={filters.status} onChange={(e) => set("status", e.target.value)}><option value="">Todos</option><option value="pending">Pendientes</option><option value="finalized">Finalizadas</option></select></label>
       <label>Fecha inicial<input aria-label="Fecha inicial" type="date" value={filters.date_from} onChange={(e) => set("date_from", e.target.value)} /><small>Inclusiva</small></label>

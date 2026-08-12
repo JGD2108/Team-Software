@@ -66,4 +66,12 @@ describe("PmpDashboard", () => {
     render(<PmpDashboard dashboard={dashboard()} orders={{ ...orders, items: [], total: 0 }} errors={[]} areas={["MEC"]} filters={filters} onFiltersChange={vi.fn()} onOrderPage={vi.fn()} />);
     expect(screen.getByText("Sin órdenes para este alcance")).toBeTruthy();
   });
+  it("makes the selected operational scope explicit and can clear it", () => {
+    const onFiltersChange = vi.fn();
+    render(<PmpDashboard dashboard={dashboard()} orders={orders} errors={[]} areas={["MEC"]} filters={{ ...filters, status: "pending" }} onFiltersChange={onFiltersChange} onOrderPage={vi.fn()} />);
+    expect(screen.getByText(/Estado de meta del alcance/)).toBeTruthy();
+    expect(screen.getByText(/Todas las áreas.*Pendientes.*Todas las fechas/, { selector: "small" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar filtros" }));
+    expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ status: "", date_from: "", date_to: "" }));
+  });
 });
