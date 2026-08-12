@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import PmpArea, PmpImport, PmpImportError, PmpOrder, PmpOrderHistory, PmpPersonnel, PmpWeeklySchedule
@@ -41,6 +42,20 @@ def _text(value: Any) -> str:
 
 def _payload(row: tuple[Any, ...]) -> str:
     return json.dumps({str(index): value for index, value in enumerate(row)}, default=str, ensure_ascii=False)
+
+
+def _planned_start_from_source(value: Any) -> date | None:
+    """Parse the explicit workbook date; never manufacture a creation date."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 def _totals(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -90,7 +105,15 @@ def _parse_rows(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]],
             invalid.append({"row_number": row_number, "field_name": error[0], "error_code": error[1], "error_message": error[2], "raw_payload_json": _payload(row)})
             continue
         seen_ids.add(external_id)
-        valid.append({"row_number": row_number, "external_id": external_id, "area": area, "status": ALLOWED_STATES[source_state], "planned_minutes": planned_minutes, "raw_payload_json": _payload(row)})
+        valid.append({
+            "row_number": row_number,
+            "external_id": external_id,
+            "area": area,
+            "status": ALLOWED_STATES[source_state],
+            "planned_minutes": planned_minutes,
+            "planned_start_date": _planned_start_from_source(row[JOSE_PLANNED_START_POSITION]),
+            "raw_payload_json": _payload(row),
+        })
     return valid, invalid, worksheet.max_row - 1
 
 
@@ -98,12 +121,16 @@ def import_jose_workbook(db: Session, path: Path | None = None) -> PmpImport:
     source = path or default_jose_path()
     content_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     existing = db.query(PmpImport).filter(PmpImport.source_hash == content_hash).order_by(PmpImport.id.desc()).first()
-    if existing:
-        return existing
     valid_rows, invalid_rows, total_rows = _parse_rows(source)
-    imported = PmpImport(source_filename=JOSE_FILENAME, source_hash=content_hash, status="completed", total_rows=total_rows, valid_rows=len(valid_rows), invalid_rows=len(invalid_rows), reconciled_at=datetime.utcnow())
-    db.add(imported)
-    db.flush()
+    imported = existing or PmpImport(source_filename=JOSE_FILENAME, source_hash=content_hash, status="completed")
+    if not existing:
+        db.add(imported)
+        db.flush()
+    imported.total_rows = total_rows
+    imported.valid_rows = len(valid_rows)
+    imported.invalid_rows = len(invalid_rows)
+    imported.status = "completed"
+    imported.reconciled_at = datetime.utcnow()
     areas: dict[str, PmpArea] = {}
     for name in sorted({row["area"] for row in valid_rows}):
         area = db.query(PmpArea).filter(PmpArea.name == name).first()
@@ -112,13 +139,39 @@ def import_jose_workbook(db: Session, path: Path | None = None) -> PmpImport:
             db.add(area)
             db.flush()
         areas[name] = area
+    existing_orders = {
+        order.external_id: order
+        for order in db.query(PmpOrder).filter(PmpOrder.pmp_import_id == imported.id).all()
+    }
     for row in valid_rows:
-        order = PmpOrder(external_id=row["external_id"], pmp_area_id=areas[row["area"]].id, status=row["status"], planned_minutes=row["planned_minutes"], source="excel", source_row_number=row["row_number"], pmp_import_id=imported.id, raw_payload_json=row["raw_payload_json"])
+        order = existing_orders.get(row["external_id"])
+        if order:
+            changed = any((
+                order.pmp_area_id != areas[row["area"]].id,
+                order.status != row["status"],
+                order.planned_minutes != row["planned_minutes"],
+                order.planned_start_date != row["planned_start_date"],
+                order.source_row_number != row["row_number"],
+            ))
+            order.pmp_area_id = areas[row["area"]].id
+            order.status = row["status"]
+            order.planned_minutes = row["planned_minutes"]
+            order.planned_start_date = row["planned_start_date"]
+            order.source_row_number = row["row_number"]
+            order.raw_payload_json = row["raw_payload_json"]
+            if changed:
+                db.add(PmpOrderHistory(pmp_order_id=order.id, action="excel_import_refresh", after_json=json.dumps({"import_id": imported.id, "row_number": row["row_number"]})))
+            continue
+        order = PmpOrder(external_id=row["external_id"], pmp_area_id=areas[row["area"]].id, status=row["status"], planned_minutes=row["planned_minutes"], planned_start_date=row["planned_start_date"], source="excel", source_row_number=row["row_number"], pmp_import_id=imported.id, raw_payload_json=row["raw_payload_json"])
         db.add(order)
         db.flush()
         db.add(PmpOrderHistory(pmp_order_id=order.id, action="excel_import", after_json=json.dumps({"import_id": imported.id, "row_number": row["row_number"]})))
+    error_keys = set(db.query(PmpImportError.row_number, PmpImportError.field_name, PmpImportError.error_code).filter(PmpImportError.pmp_import_id == imported.id).all())
     for row in invalid_rows:
-        db.add(PmpImportError(pmp_import_id=imported.id, **row))
+        key = (row["row_number"], row["field_name"], row["error_code"])
+        if key not in error_keys:
+            db.add(PmpImportError(pmp_import_id=imported.id, **row))
+    _store_reconciliation(db, imported, valid_rows)
     db.commit()
     return imported
 
@@ -130,13 +183,34 @@ def import_summary(db: Session, imported: PmpImport) -> dict[str, Any]:
 
 
 def reconcile_import(db: Session, imported: PmpImport) -> dict[str, Any]:
-    # Expected data is reconstructed from the immutable workbook, while actual
-    # data is restricted to this import.  This makes a mismatch visible.
-    expected_rows, _, _ = _parse_rows(default_jose_path())
+    """Reconcile DB rows against totals cached during the explicit import."""
+    if not imported.reconciliation_json:
+        return {
+            "matches": False,
+            "expected": {"global": {}, "by_area": {}},
+            "persisted": _imported_totals(db, imported),
+            "differences": {"global": {"reconciliation": "La carga debe ejecutarse una vez para almacenar su reconciliación."}, "by_area": {}},
+        }
+    try:
+        expected = json.loads(imported.reconciliation_json)["expected"]
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return {
+            "matches": False,
+            "expected": {"global": {}, "by_area": {}},
+            "persisted": _imported_totals(db, imported),
+            "differences": {"global": {"reconciliation": "La reconciliación persistida no es legible."}, "by_area": {}},
+        }
+    persisted = _imported_totals(db, imported)
+    return _reconciliation_result(expected, persisted)
+
+
+def _imported_totals(db: Session, imported: PmpImport) -> dict[str, Any]:
     actual_rows = db.query(PmpOrder, PmpArea).join(PmpArea).filter(PmpOrder.pmp_import_id == imported.id, PmpOrder.is_active.is_(True)).all()
     actual = [{"area": area.name, "status": order.status, "planned_minutes": order.planned_minutes} for order, area in actual_rows]
-    expected = _totals(expected_rows)
-    persisted = _totals(actual)
+    return _totals(actual)
+
+
+def _reconciliation_result(expected: dict[str, Any], persisted: dict[str, Any]) -> dict[str, Any]:
     differences = {"global": {}, "by_area": {}}
     for key in expected["global"]:
         delta = persisted["global"].get(key, 0) - expected["global"].get(key, 0)
@@ -153,15 +227,10 @@ def reconcile_import(db: Session, imported: PmpImport) -> dict[str, Any]:
     return {"matches": not differences["global"] and not differences["by_area"], "expected": expected, "persisted": persisted, "differences": differences}
 
 
-def _planned_start_date(raw_payload_json: str) -> date | None:
-    """Read the explicit Excel planned start date without fabricating a date."""
-    try:
-        value = json.loads(raw_payload_json).get(str(JOSE_PLANNED_START_POSITION))
-        if not value:
-            return None
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+def _store_reconciliation(db: Session, imported: PmpImport, expected_rows: list[dict[str, Any]]) -> None:
+    expected = _totals(expected_rows)
+    persisted = _imported_totals(db, imported)
+    imported.reconciliation_json = json.dumps({"version": 1, "expected": expected, "persisted_at_import": persisted}, ensure_ascii=False)
 
 
 def _status_color(compliant: bool, workload_percent: float) -> str:
@@ -230,6 +299,29 @@ def _metric_values(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return values
 
 
+def _metric_values_from_aggregate(
+    total_orders: int,
+    finalized_orders: int,
+    planned_minutes: float,
+    completed_minutes: float,
+) -> dict[str, Any]:
+    """Apply the shared metric rules without materializing every order."""
+    synthetic_rows = ([{"status": "finalized", "planned_minutes": completed_minutes}] if finalized_orders else [])
+    pending_orders = total_orders - finalized_orders
+    if pending_orders:
+        synthetic_rows.append({"status": "pending", "planned_minutes": planned_minutes - completed_minutes})
+    values = _metric_values(synthetic_rows)
+    values["total_orders"] = total_orders
+    values["finalized_orders"] = finalized_orders
+    values["pending_orders"] = pending_orders
+    values["order_completion_percent"] = round(100 * finalized_orders / total_orders, 2) if total_orders else 0.0
+    values["formatted"]["total_orders"] = _format_metric(total_orders)
+    values["formatted"]["finalized_orders"] = _format_metric(finalized_orders)
+    values["formatted"]["pending_orders"] = _format_metric(pending_orders)
+    values["formatted"]["order_completion_percent"] = f"{values['order_completion_percent']:.2f}%"
+    return values
+
+
 def metric_dictionary() -> dict[str, dict[str, str]]:
     """Single metric glossary returned with dashboard responses for UI tooltips."""
     return {
@@ -244,42 +336,43 @@ def metric_dictionary() -> dict[str, dict[str, str]]:
     }
 
 
-def _filtered_order_rows(
+def _filtered_orders_query(
     db: Session,
     area_name: str | None = None,
     status: str | None = None,
     as_of_date: date | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Use one joined query, then apply raw-source planned-date filtering safely."""
+    date_from: date | None = None,
+    date_to: date | None = None,
+):
+    """Build a SQL-only query over persisted operational PMP columns."""
+    if status and status not in {"pending", "finalized"}:
+        raise ValueError("El estado PMP debe ser pending o finalized")
+    if as_of_date and (date_from or date_to):
+        raise ValueError("Use fecha inicial/final o fecha de corte, no ambos")
+    if date_from and date_to and date_from > date_to:
+        raise ValueError("La fecha inicial no puede ser posterior a la fecha final")
     query = db.query(PmpOrder, PmpArea).join(PmpArea).filter(PmpOrder.is_active.is_(True))
     if area_name:
         query = query.filter(PmpArea.name == area_name.upper())
     if status:
         query = query.filter(PmpOrder.status == status)
-    fetched = query.order_by(PmpArea.name, PmpOrder.external_id).all()
-    rows: list[dict[str, Any]] = []
-    unavailable_dates = 0
-    for order, area in fetched:
-        planned_start = _planned_start_date(order.raw_payload_json)
-        if as_of_date and planned_start is None:
-            unavailable_dates += 1
-            continue
-        if as_of_date and planned_start and planned_start > as_of_date:
-            continue
-        rows.append({
-            "id": order.id,
-            "external_id": order.external_id,
-            "area": area.name,
-            "status": order.status,
-            "planned_minutes": float(order.planned_minutes),
-            "planned_start_date": planned_start.isoformat() if planned_start else None,
-            "source": order.source,
-            "source_row_number": order.source_row_number,
-        })
-    return rows, {
-        "order_date_filter": "planned_start_date_from_excel" if as_of_date else "not_requested",
+    if as_of_date:
+        query = query.filter(PmpOrder.planned_start_date <= as_of_date)
+        mode = "planned_start_date_as_of"
+    elif date_from or date_to:
+        if date_from:
+            query = query.filter(PmpOrder.planned_start_date >= date_from)
+        if date_to:
+            query = query.filter(PmpOrder.planned_start_date <= date_to)
+        mode = "planned_start_date_range"
+    else:
+        mode = "not_requested"
+    return query, {
+        "order_date_filter": mode,
         "as_of_date": as_of_date.isoformat() if as_of_date else None,
-        "orders_without_planned_start_date_excluded": unavailable_dates if as_of_date else 0,
+        "date_from": date_from.isoformat() if date_from else None,
+        "date_to": date_to.isoformat() if date_to else None,
+        "orders_without_planned_start_date_excluded": 0,
     }
 
 
@@ -288,23 +381,41 @@ def dashboard_metrics(
     area_name: str | None = None,
     status: str | None = None,
     as_of_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
 ) -> dict[str, Any]:
-    if status and status not in {"pending", "finalized"}:
-        raise ValueError("El estado PMP debe ser pending o finalized")
-    rows, filter_application = _filtered_order_rows(db, area_name, status, as_of_date)
+    query, filter_application = _filtered_orders_query(db, area_name, status, as_of_date, date_from, date_to)
     area_query = db.query(PmpArea).filter(PmpArea.is_active.is_(True))
     if area_name:
         area_query = area_query.filter(PmpArea.name == area_name.upper())
     by_area: dict[str, dict[str, Any]] = {area.name: _metric_values([]) for area in area_query.order_by(PmpArea.name).all()}
+    aggregates = (
+        query.with_entities(
+            PmpArea.name.label("area"),
+            PmpOrder.status.label("status"),
+            func.count(PmpOrder.id).label("orders"),
+            func.coalesce(func.sum(PmpOrder.planned_minutes), 0.0).label("planned_minutes"),
+        )
+        .group_by(PmpArea.name, PmpOrder.status)
+        .all()
+    )
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in rows:
-        grouped[row["area"]].append(row)
-    for area, area_rows in grouped.items():
-        by_area[area] = _metric_values(area_rows)
+    for row in aggregates:
+        grouped[row.area].append({"status": row.status, "planned_minutes": float(row.planned_minutes), "orders": int(row.orders)})
+    for area, rows in grouped.items():
+        total_orders = sum(row["orders"] for row in rows)
+        finalized_orders = sum(row["orders"] for row in rows if row["status"] == "finalized")
+        planned_minutes = sum(row["planned_minutes"] for row in rows)
+        completed_minutes = sum(row["planned_minutes"] for row in rows if row["status"] == "finalized")
+        by_area[area] = _metric_values_from_aggregate(total_orders, finalized_orders, planned_minutes, completed_minutes)
     ranking = sorted(by_area, key=lambda area: (-by_area[area]["pending_planned_minutes"], by_area[area]["workload_completion_percent"], area))
     for index, area in enumerate(ranking, start=1):
         by_area[area]["risk_rank"] = index
-    global_metrics = _metric_values(rows)
+    total_orders = sum(row["orders"] for rows in grouped.values() for row in rows)
+    finalized_orders = sum(row["orders"] for rows in grouped.values() for row in rows if row["status"] == "finalized")
+    planned_minutes = sum(row["planned_minutes"] for rows in grouped.values() for row in rows)
+    completed_minutes = sum(row["planned_minutes"] for rows in grouped.values() for row in rows if row["status"] == "finalized")
+    global_metrics = _metric_values_from_aggregate(total_orders, finalized_orders, planned_minutes, completed_minutes)
     global_metrics["risk_rank"] = None
     high_risk_area = ranking[0] if ranking and by_area[ranking[0]]["pending_planned_minutes"] > 0 else None
     alerts = [] if global_metrics["compliant"] else [{
@@ -426,16 +537,26 @@ def list_orders(
     area_name: str | None = None,
     status: str | None = None,
     as_of_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> dict[str, Any]:
-    if status and status not in {"pending", "finalized"}:
-        raise ValueError("El estado PMP debe ser pending o finalized")
-    rows, filter_application = _filtered_order_rows(db, area_name, status, as_of_date)
-    page = rows[offset: offset + limit]
-    for row in page:
-        row["planned_hours"] = round(row["planned_minutes"] / 60, 2)
-    return {"items": page, "total": len(rows), "offset": offset, "limit": limit, "filter_application": filter_application}
+    query, filter_application = _filtered_orders_query(db, area_name, status, as_of_date, date_from, date_to)
+    total = query.order_by(None).count()
+    page = query.order_by(PmpArea.name, PmpOrder.external_id, PmpOrder.id).offset(offset).limit(limit).all()
+    items = [{
+        "id": order.id,
+        "external_id": order.external_id,
+        "area": area.name,
+        "status": order.status,
+        "planned_minutes": float(order.planned_minutes),
+        "planned_hours": round(order.planned_minutes / 60, 2),
+        "planned_start_date": order.planned_start_date.isoformat() if order.planned_start_date else None,
+        "source": order.source,
+        "source_row_number": order.source_row_number,
+    } for order, area in page]
+    return {"items": items, "total": total, "offset": offset, "limit": limit, "filter_application": filter_application}
 
 
 def validate_schedule(shift_name: str, available_minutes: float) -> None:

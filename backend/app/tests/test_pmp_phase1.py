@@ -2,12 +2,14 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pytest
 from sqlalchemy import func
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
 from app.models import PmpArea, PmpOrder, PmpPersonnel, PmpWeeklySchedule
+from app.services import pmp
 from app.services.pmp import capacity_metrics, dashboard_metrics, import_jose_workbook, list_orders, reconcile_import
 
 
@@ -23,14 +25,16 @@ def add_order(db, area: PmpArea, external_id: str, status: str, minutes: float, 
         pmp_area_id=area.id,
         status=status,
         planned_minutes=minutes,
+        planned_start_date=date.fromisoformat(planned_start[:10]),
         source="excel",
         raw_payload_json=json.dumps({"3": planned_start}),
     ))
 
 
-def test_jose_import_reconciles_real_workbook_and_direct_database_aggregation():
+def test_jose_import_reconciles_persisted_data_without_reopening_workbook(monkeypatch):
     db = fresh_session()
     imported = import_jose_workbook(db, Path(__file__).resolve().parents[3] / "backend" / "app" / "data" / "JOSE.xlsx")
+    monkeypatch.setattr(pmp, "load_workbook", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("operational reconciliation must not read Excel")))
     reconciliation = reconcile_import(db, imported)
     direct_orders, direct_minutes = db.query(func.count(PmpOrder.id), func.sum(PmpOrder.planned_minutes)).one()
 
@@ -39,6 +43,17 @@ def test_jose_import_reconciles_real_workbook_and_direct_database_aggregation():
     assert reconciliation["persisted"]["global"]["planned_minutes"] == 53874.0
     assert (direct_orders, direct_minutes) == (1009, 53874.0)
     assert reconciliation["persisted"]["by_area"]["ELE"]["orders"] == 538
+
+
+def test_jose_import_is_idempotent_and_does_not_duplicate_orders_or_diagnostics():
+    db = fresh_session()
+    source = Path(__file__).resolve().parents[3] / "backend" / "app" / "data" / "JOSE.xlsx"
+    first = import_jose_workbook(db, source)
+    second = import_jose_workbook(db, source)
+
+    assert first.id == second.id
+    assert db.query(PmpOrder).count() == 1009
+    assert db.query(pmp.PmpImportError).filter_by(pmp_import_id=first.id).count() == 73
 
 
 def test_metrics_keep_orders_minutes_and_hours_separate_by_area():
@@ -82,7 +97,7 @@ def test_compliance_at_exactly_ninety_is_not_compliant_and_is_yellow():
     assert "90 % exacto no cumple" in metrics["strict_target_note"]
 
 
-def test_filters_use_real_planned_start_date_and_status_without_n_plus_one_behavior():
+def test_filters_use_persisted_planned_start_date_and_status_without_workbook_reads(monkeypatch):
     db = fresh_session()
     area = PmpArea(name="MEC")
     db.add(area)
@@ -91,13 +106,36 @@ def test_filters_use_real_planned_start_date_and_status_without_n_plus_one_behav
     add_order(db, area, "OT-new", "pending", 120, "2026-08-11 07:00:00.000")
     db.commit()
 
+    monkeypatch.setattr(pmp, "load_workbook", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("dashboard must not read Excel")))
     metrics = dashboard_metrics(db, "MEC", "finalized", date(2026, 8, 10))
     orders = list_orders(db, "MEC", None, date(2026, 8, 10))
 
     assert metrics["global"]["total_orders"] == 1
     assert metrics["global"]["planned_minutes"] == 60
-    assert metrics["filter_application"]["order_date_filter"] == "planned_start_date_from_excel"
+    assert metrics["filter_application"]["order_date_filter"] == "planned_start_date_as_of"
     assert [item["external_id"] for item in orders["items"]] == ["OT-old"]
+
+
+def test_date_range_is_inclusive_rejects_reverse_and_returns_empty_range():
+    db = fresh_session()
+    area = PmpArea(name="MEC")
+    db.add(area)
+    db.flush()
+    add_order(db, area, "OT-before", "pending", 30, "2026-08-09 07:00:00.000")
+    add_order(db, area, "OT-start", "finalized", 60, "2026-08-10 07:00:00.000")
+    add_order(db, area, "OT-end", "pending", 90, "2026-08-12 07:00:00.000")
+    db.commit()
+
+    ranged = list_orders(db, "MEC", None, None, date(2026, 8, 10), date(2026, 8, 12), 0, 20)
+    empty = list_orders(db, "MEC", None, None, date(2026, 8, 13), date(2026, 8, 14), 0, 20)
+
+    assert [item["external_id"] for item in ranged["items"]] == ["OT-end", "OT-start"]
+    assert ranged["total"] == 2
+    assert ranged["filter_application"]["order_date_filter"] == "planned_start_date_range"
+    assert empty["items"] == []
+    assert empty["total"] == 0
+    with pytest.raises(ValueError, match="fecha inicial"):
+        dashboard_metrics(db, "MEC", None, None, date(2026, 8, 13), date(2026, 8, 12))
 
 
 def test_area_without_orders_returns_zero_metrics():

@@ -45,7 +45,7 @@ import {
 import { API_URL, api, Equipment, ProductionLine, Upload, User } from "./lib/api";
 import { ReportDeleteAction } from "./components/ReportDeleteAction";
 import { ReportRangeControls } from "./components/ReportRangeControls";
-import { PmpDashboard, PmpDashboardResponse, PmpFilters, PmpImportError, PmpOrdersResponse } from "./components/PmpDashboard";
+import { PmpDashboard, PmpDashboardResponse, PmpFilters, PmpImportError, PmpOrdersResponse, validatePmpDateRange } from "./components/PmpDashboard";
 import "./styles.css";
 
 type View = "home" | "dashboard" | "equipment" | "lines" | "reports" | "pmp" | "management_reports" | "users";
@@ -1598,8 +1598,10 @@ function PmpPage({ user }: { user: User }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [filters, setFilters] = useState<PmpFilters>(() => {
-    try { return { area: "", status: "", as_of_date: "", shift: "", unit: "hours", ...JSON.parse(localStorage.getItem("pmp-dashboard-filters") || "{}") }; }
-    catch { return { area: "", status: "", as_of_date: "", shift: "", unit: "hours" }; }
+    try {
+      const saved = JSON.parse(localStorage.getItem("pmp-dashboard-filters") || "{}");
+      return { area: saved.area || "", status: saved.status || "", date_from: saved.date_from || "", date_to: saved.date_to || "", shift: saved.shift || "", unit: saved.unit || "hours" };
+    } catch { return { area: "", status: "", date_from: "", date_to: "", shift: "", unit: "hours" }; }
   });
   const [orderOffset, setOrderOffset] = useState(0);
 
@@ -1607,18 +1609,22 @@ function PmpPage({ user }: { user: User }) {
   async function refresh(offset = orderOffset) {
     setLoading(true); setError("");
     try {
-      const params = queryString({ area: filters.area, status: filters.status, as_of_date: filters.as_of_date, shift: filters.shift });
+      const params = queryString({ area: filters.area, status: filters.status, date_from: filters.date_from, date_to: filters.date_to, shift: filters.shift });
       const [importResult, dashboardResult, ordersResult, areaResult] = await Promise.all([
         api.request<PmpImportSummary | null>("/pmp/imports/latest"),
         api.request<PmpDashboardResponse>(`/pmp/dashboard${params}`),
-        api.request<PmpOrdersResponse>(`/pmp/orders${queryString({ area: filters.area, status: filters.status, as_of_date: filters.as_of_date, offset, limit: 30 })}`),
+        api.request<PmpOrdersResponse>(`/pmp/orders${queryString({ area: filters.area, status: filters.status, date_from: filters.date_from, date_to: filters.date_to, offset, limit: 30 })}`),
         api.request<{ name: string }[]>("/pmp/areas"),
       ]);
       setSummary(importResult); setDashboard(dashboardResult); setOrders(ordersResult); setAreas(areaResult.map((area) => area.name)); setOrderOffset(offset);
     } catch (err) { setError((err as Error).message); }
     finally { setLoading(false); }
   }
-  useEffect(() => { refresh(0); }, [filters.area, filters.status, filters.as_of_date, filters.shift]);
+  useEffect(() => {
+    const validationError = validatePmpDateRange(filters);
+    if (validationError) { setError(validationError); setLoading(false); return; }
+    refresh(0);
+  }, [filters.area, filters.status, filters.date_from, filters.date_to, filters.shift]);
   async function executeImport() { setBusy(true); try { setSummary(await api.request<PmpImportSummary>("/pmp/imports/jose", { method: "POST" })); await refresh(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }
   async function approve() { if (!summary) return; setBusy(true); try { setSummary(await api.request<PmpImportSummary>(`/pmp/imports/${summary.id}/approve`, { method: "POST" })); await refresh(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }
 

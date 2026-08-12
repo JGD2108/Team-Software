@@ -20,7 +20,7 @@ import {
 } from "recharts";
 
 export type WorkloadUnit = "orders" | "minutes" | "hours";
-export type PmpFilters = { area: string; status: string; as_of_date: string; shift: string; unit: WorkloadUnit };
+export type PmpFilters = { area: string; status: string; date_from: string; date_to: string; shift: string; unit: WorkloadUnit };
 
 export type PmpMetric = {
   total_orders: number; finalized_orders: number; pending_orders: number;
@@ -36,7 +36,7 @@ export type PmpDashboardResponse = {
   metrics: {
     global: PmpMetric; by_area: Record<string, PmpMetric>; area_ranking: string[];
     highest_risk_area: string | null; alerts: { code: string; message: string }[];
-    filter_application: { order_date_filter: string; as_of_date: string | null; orders_without_planned_start_date_excluded: number };
+    filter_application: { order_date_filter: string; as_of_date: string | null; date_from?: string | null; date_to?: string | null; orders_without_planned_start_date_excluded: number };
   };
   capacity: {
     configured: boolean; notice: string; available_shifts: string[];
@@ -48,6 +48,12 @@ export type PmpDashboardResponse = {
 export type PmpOrder = { id: number; external_id: string; area: string; status: "pending" | "finalized"; planned_minutes: number; planned_hours: number; planned_start_date: string | null; source: string; source_row_number: number | null };
 export type PmpOrdersResponse = { items: PmpOrder[]; total: number; offset: number; limit: number };
 export type PmpImportError = { row_number: number; field_name: string; message: string; code?: string };
+
+export function validatePmpDateRange(filters: Pick<PmpFilters, "date_from" | "date_to">): string | null {
+  return filters.date_from && filters.date_to && filters.date_from > filters.date_to
+    ? "La fecha inicial no puede ser posterior a la fecha final."
+    : null;
+}
 
 function n(value: number | null | undefined, digits = 1) {
   return value === null || value === undefined ? "—" : new Intl.NumberFormat("es-CO", { maximumFractionDigits: digits }).format(value);
@@ -89,7 +95,7 @@ export function PmpDashboard({
   return <div className="pmp-dashboard" data-testid="pmp-dashboard">
     <section className="pmp-dashboard-hero">
       <div>
-        <span className="eyebrow">Corte de PMP · fuente: JOSE.xlsx</span>
+        <span className="eyebrow">Datos PMP persistidos · fuente inicial: JOSE.xlsx</span>
         <h2>Decisiones por carga real, no por conteo.</h2>
         <p>La meta se cumple únicamente al superar 90% de la carga planeada. La fecha de corte usa <strong>FechaPlaneadaInicio</strong> de la fuente, no una fecha inventada.</p>
       </div>
@@ -101,11 +107,12 @@ export function PmpDashboard({
     <section className="pmp-filter-panel" aria-label="Filtros PMP">
       <label>Área<select aria-label="Área" value={filters.area} onChange={(e) => set("area", e.target.value)}><option value="">Todas las áreas</option>{areas.map((area) => <option key={area} value={area}>{area}</option>)}</select></label>
       <label>Estado<select aria-label="Estado" value={filters.status} onChange={(e) => set("status", e.target.value)}><option value="">Todos</option><option value="pending">Pendientes</option><option value="finalized">Finalizadas</option></select></label>
-      <label>Fecha de corte<input aria-label="Fecha de corte" type="date" value={filters.as_of_date} onChange={(e) => set("as_of_date", e.target.value)} /><small>Vacío: toda la fuente</small></label>
+      <label>Fecha inicial<input aria-label="Fecha inicial" type="date" value={filters.date_from} onChange={(e) => set("date_from", e.target.value)} /><small>Inclusiva</small></label>
+      <label>Fecha final<input aria-label="Fecha final" type="date" value={filters.date_to} onChange={(e) => set("date_to", e.target.value)} /><small>Inclusiva</small></label>
       <label>Turno<select aria-label="Turno" value={filters.shift} onChange={(e) => set("shift", e.target.value)} disabled={!dashboard.capacity.available_shifts.length}><option value="">Todos / sin asignar demanda</option>{dashboard.capacity.available_shifts.map((shift) => <option key={shift} value={shift}>Turno {shift}</option>)}</select></label>
       <fieldset className="pmp-unit-switch"><legend>Unidad de carga</legend>{(["orders", "minutes", "hours"] as const).map((unit) => <button key={unit} type="button" aria-pressed={filters.unit === unit} onClick={() => set("unit", unit)}>{unit === "orders" ? "Órdenes" : unit === "minutes" ? "Minutos" : "Horas"}</button>)}</fieldset>
     </section>
-    {dashboard.metrics.filter_application.orders_without_planned_start_date_excluded > 0 && <p className="pmp-inline-warning"><AlertTriangle size={15} />Se excluyeron {dashboard.metrics.filter_application.orders_without_planned_start_date_excluded} órdenes sin FechaPlaneadaInicio al aplicar el corte.</p>}
+    {dashboard.metrics.filter_application.orders_without_planned_start_date_excluded > 0 && <p className="pmp-inline-warning"><AlertTriangle size={15} />Se excluyeron {dashboard.metrics.filter_application.orders_without_planned_start_date_excluded} órdenes sin FechaPlaneadaInicio al aplicar el filtro.</p>}
 
     <section className="pmp-kpi-grid" aria-label="Indicadores principales PMP">
       {[

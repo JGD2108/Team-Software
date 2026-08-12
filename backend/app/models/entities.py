@@ -208,6 +208,7 @@ class PmpImport(Base, TimestampMixin):
     total_rows: Mapped[int] = mapped_column(Integer, default=0)
     valid_rows: Mapped[int] = mapped_column(Integer, default=0)
     invalid_rows: Mapped[int] = mapped_column(Integer, default=0)
+    reconciliation_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     reconciled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -235,6 +236,9 @@ class PmpOrder(Base, TimestampMixin):
     pmp_area_id: Mapped[int] = mapped_column(ForeignKey("pmp_areas.id"), index=True)
     status: Mapped[str] = mapped_column(String(30), index=True)
     planned_minutes: Mapped[float] = mapped_column(Float)
+    # This is the explicit FechaPlaneadaInicio from the source workbook.  It
+    # is not an inferred order creation date.
+    planned_start_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(30), default="excel", index=True)
     source_row_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pmp_import_id: Mapped[int | None] = mapped_column(ForeignKey("pmp_imports.id"), nullable=True, index=True)

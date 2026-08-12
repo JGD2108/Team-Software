@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { PmpDashboard, PmpDashboardResponse, PmpFilters, PmpOrdersResponse } from "./PmpDashboard";
+import { PmpDashboard, PmpDashboardResponse, PmpFilters, PmpOrdersResponse, validatePmpDateRange } from "./PmpDashboard";
 
 function metric(overrides = {}) {
   return {
@@ -25,7 +25,7 @@ function dashboard(configured = false): PmpDashboardResponse {
 }
 
 const orders: PmpOrdersResponse = { items: [{ id: 1, external_id: "OT-1", area: "MEC", status: "pending", planned_minutes: 60, planned_hours: 1, planned_start_date: "2026-08-10", source: "excel", source_row_number: 2 }], total: 1, offset: 0, limit: 30 };
-const filters: PmpFilters = { area: "", status: "", as_of_date: "", shift: "", unit: "hours" };
+const filters: PmpFilters = { area: "", status: "", date_from: "", date_to: "", shift: "", unit: "hours" };
 
 describe("PmpDashboard", () => {
   it("renders KPI values and marks exactly 90% as not compliant", () => {
@@ -40,11 +40,20 @@ describe("PmpDashboard", () => {
     const onFiltersChange = vi.fn();
     render(<PmpDashboard dashboard={dashboard()} orders={orders} errors={[]} areas={["MEC"]} filters={filters} onFiltersChange={onFiltersChange} onOrderPage={vi.fn()} />);
     fireEvent.change(screen.getByLabelText("Área"), { target: { value: "MEC" } });
+    fireEvent.change(screen.getByLabelText("Fecha inicial"), { target: { value: "2026-08-10" } });
+    fireEvent.change(screen.getByLabelText("Fecha final"), { target: { value: "2026-08-12" } });
     fireEvent.click(screen.getByRole("button", { name: "Minutos" }));
     expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ area: "MEC" }));
+    expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ date_from: "2026-08-10" }));
+    expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ date_to: "2026-08-12" }));
     expect(onFiltersChange).toHaveBeenCalledWith(expect.objectContaining({ unit: "minutes" }));
     expect(screen.getByText("Capacidad no configurada")).toBeTruthy();
     expect(screen.getByText("No hay capacidad verificable")).toBeTruthy();
+  });
+
+  it("validates a reversed date range before requesting PMP data", () => {
+    expect(validatePmpDateRange({ date_from: "2026-08-12", date_to: "2026-08-10" })).toMatch(/fecha inicial/i);
+    expect(validatePmpDateRange({ date_from: "2026-08-10", date_to: "2026-08-12" })).toBeNull();
   });
 
   it("renders configured capacity instead of a staffing claim when data exists", () => {

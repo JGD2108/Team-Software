@@ -72,18 +72,21 @@ def pmp_dashboard(
     area: str | None = None,
     status: str | None = Query(default=None, pattern="^(pending|finalized)$"),
     as_of_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     week_start: date | None = None,
     shift: str | None = Query(default=None, pattern="^[123]$"),
     _: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     try:
-        metrics = dashboard_metrics(db, area, status, as_of_date)
+        metrics = dashboard_metrics(db, area, status, as_of_date, date_from, date_to)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     # Schedules are weekly records. An as-of date selects its actual Monday
     # rather than pretending the selected day is itself a week_start value.
-    capacity_week = week_start or (as_of_date - timedelta(days=as_of_date.weekday()) if as_of_date else None)
+    capacity_anchor = as_of_date or date_to or date_from
+    capacity_week = week_start or (capacity_anchor - timedelta(days=capacity_anchor.weekday()) if capacity_anchor else None)
     capacity = (
         capacity_metrics(db, capacity_week, metrics, area, shift)
         if capacity_week
@@ -97,6 +100,8 @@ def pmp_dashboard(
             "area": area.upper() if area else None,
             "status": status,
             "as_of_date": as_of_date.isoformat() if as_of_date else None,
+            "date_from": date_from.isoformat() if date_from else None,
+            "date_to": date_to.isoformat() if date_to else None,
             "week_start": capacity_week.isoformat() if capacity_week else None,
             "shift": shift,
         },
@@ -108,13 +113,15 @@ def pmp_orders(
     area: str | None = None,
     status: str | None = Query(default=None, pattern="^(pending|finalized)$"),
     as_of_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     _: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
     try:
-        return list_orders(db, area, status, as_of_date, offset, limit)
+        return list_orders(db, area, status, as_of_date, date_from, date_to, offset, limit)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
