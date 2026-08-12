@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.api.deps import current_user
+from app.api.deps import current_user, require_admin
 from app.core.database import get_db
 from app.models import Equipment, FailureMode, MaintenanceEvent, ProductionLine, Shift, User
 from app.schemas.common import DailyReportIn
@@ -60,15 +60,69 @@ def report_query(db: Session):
     )
 
 
+def audit_snapshot(event: MaintenanceEvent) -> dict:
+    return {
+        "event_date": event.event_date,
+        "production_line_id": event.production_line_id,
+        "shift_id": event.shift_id,
+        "equipment_id": event.equipment_id,
+        "failure_mode_id": event.failure_mode_id,
+        "reported_by_user_id": event.reported_by_user_id,
+        "damage_description": event.damage_description,
+        "reason_description": event.reason_description,
+        "downtime_minutes": event.downtime_minutes,
+        "frequency": event.frequency,
+        "source": event.source,
+    }
+
+
 @router.get("")
 def list_daily_reports(
-    report_date: date | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
     _: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
-    target_date = report_date or local_today()
-    rows = report_query(db).filter(MaintenanceEvent.event_date == target_date).order_by(MaintenanceEvent.created_at.desc()).all()
+    start_date = date_from or date_to or local_today()
+    end_date = date_to or date_from or start_date
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="La fecha inicial no puede ser posterior a la fecha final")
+    rows = (
+        report_query(db)
+        .filter(MaintenanceEvent.event_date >= start_date, MaintenanceEvent.event_date <= end_date)
+        .order_by(MaintenanceEvent.created_at.desc())
+        .all()
+    )
     return [serialize_report(row) for row in rows]
+
+
+@router.delete("/{report_id}")
+def delete_daily_report(
+    report_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    event = (
+        db.query(MaintenanceEvent)
+        .filter(MaintenanceEvent.id == report_id, MaintenanceEvent.source == "manual_report")
+        .one_or_none()
+    )
+    if not event:
+        raise HTTPException(status_code=404, detail="Reporte diario no encontrado")
+
+    before = audit_snapshot(event)
+    db.delete(event)
+    log_action(
+        db,
+        admin,
+        "maintenance_event",
+        "daily_report_delete",
+        report_id,
+        before=before,
+        after={"deleted": True},
+    )
+    db.commit()
+    return {"id": report_id, "deleted": True}
 
 
 @router.post("", status_code=201)

@@ -43,6 +43,8 @@ import {
   YAxis
 } from "recharts";
 import { API_URL, api, Equipment, ProductionLine, Upload, User } from "./lib/api";
+import { ReportDeleteAction } from "./components/ReportDeleteAction";
+import { ReportRangeControls } from "./components/ReportRangeControls";
 import "./styles.css";
 
 type View = "home" | "dashboard" | "equipment" | "lines" | "pmp" | "management_reports" | "users";
@@ -689,7 +691,8 @@ function FilterBar({ filters, setFilters, options, onSubmit, onReset }: { filter
 
 function EquipmentPage({ user }: { user: User }) {
   const todayIso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const [selectedDate, setSelectedDate] = useState(todayIso);
+  const [dateFrom, setDateFrom] = useState(todayIso);
+  const [dateTo, setDateTo] = useState(todayIso);
   const [reports, setReports] = useState<DailyReport[]>([]);
   const [selectedEquipment, setSelectedEquipment] = useState<IncidentEquipmentGroup | null>(null);
   const [loading, setLoading] = useState(true);
@@ -700,6 +703,7 @@ function EquipmentPage({ user }: { user: User }) {
   const [assetCode, setAssetCode] = useState("");
   const [assetLineId, setAssetLineId] = useState("");
   const [adminMessage, setAdminMessage] = useState("");
+  const [reportMessage, setReportMessage] = useState("");
 
   useEffect(() => {
     if (user.role === "admin") {
@@ -707,15 +711,7 @@ function EquipmentPage({ user }: { user: User }) {
     }
   }, [user.role]);
 
-  useEffect(() => {
-    setSelectedEquipment(null);
-    setLoading(true);
-    setError("");
-    api.request<DailyReport[]>(`/daily-reports?report_date=${encodeURIComponent(selectedDate)}`)
-      .then(setReports)
-      .catch((err) => setError((err as Error).message))
-      .finally(() => setLoading(false));
-  }, [selectedDate]);
+  useEffect(() => { refreshIncidents(); }, []);
 
   useEffect(() => {
     if (!selectedEquipment) return;
@@ -746,19 +742,31 @@ function EquipmentPage({ user }: { user: User }) {
   });
   const equipmentGroups = Array.from(groupMap.values()).sort((a, b) => totalDowntime(b.reports) - totalDowntime(a.reports));
   const totalDayDowntime = totalDowntime(reports);
-  const selectedDateLabel = formatDate(selectedDate);
+  const selectedDateLabel = dateFrom === dateTo ? formatDate(dateFrom) : `${formatDate(dateFrom)} — ${formatDate(dateTo)}`;
 
   async function refreshIncidents() {
+    if (dateFrom > dateTo) {
+      setError("La fecha inicial no puede ser posterior a la fecha final.");
+      return;
+    }
     setSelectedEquipment(null);
     setLoading(true);
     setError("");
     try {
-      setReports(await api.request<DailyReport[]>(`/daily-reports?report_date=${encodeURIComponent(selectedDate)}`));
+      setReports(await api.request<DailyReport[]>(`/daily-reports?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`));
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
+  }
+
+  async function deleteReport(reportId: number) {
+    setError("");
+    setReportMessage("");
+    await api.request<{ id: number; deleted: boolean }>(`/daily-reports/${reportId}`, { method: "DELETE" });
+    setReportMessage("Reporte eliminado correctamente.");
+    await refreshIncidents();
   }
 
   async function createAsset() {
@@ -779,25 +787,22 @@ function EquipmentPage({ user }: { user: User }) {
     <div className="equipment-incidents-page">
       <PageTitle
         title="Equipos con fallas"
-        subtitle="Consulta los equipos que presentaron reportes en una fecha y abre cada tarjeta para revisar el detalle de sus fallas."
+        subtitle="Consulta los equipos que presentaron reportes en un rango de fechas y abre cada tarjeta para revisar el detalle de sus fallas."
         action={user.role === "admin" ? <button className="secondary" onClick={() => setShowAddAsset((value) => !value)}><Plus size={17} />Agregar activo</button> : undefined}
       />
 
       <section className="incident-date-panel">
         <div>
-          <span className="eyebrow">Jornada consultada</span>
+          <span className="eyebrow">Período consultado</span>
           <h2>{selectedDateLabel}</h2>
-          <p>Solo aparecen equipos que tuvieron al menos un reporte durante este día.</p>
+          <p>El rango incluye ambas fechas y conserva el orden de los reportes.</p>
         </div>
-        <div className="incident-date-actions">
-          <label><span><CalendarDays size={16} />Escoger fecha</span><input type="date" max={todayIso} value={selectedDate} onChange={(event) => event.target.value && setSelectedDate(event.target.value)} /></label>
-          <button className="secondary" disabled={loading} onClick={refreshIncidents}><RefreshCw size={16} className={loading ? "spin" : ""} />Actualizar</button>
-        </div>
+        <ReportRangeControls dateFrom={dateFrom} dateTo={dateTo} maxDate={todayIso} loading={loading} onDateFromChange={setDateFrom} onDateToChange={setDateTo} onApply={refreshIncidents} />
       </section>
 
       <section className="incident-day-metrics">
-        <article><span>Equipos afectados</span><strong>{equipmentGroups.length}</strong><small>Con reportes en la fecha</small></article>
-        <article><span>Reportes registrados</span><strong>{reports.length}</strong><small>Eventos puntuales</small></article>
+        <article><span>Equipos afectados</span><strong>{equipmentGroups.length}</strong><small>Con reportes en el rango</small></article>
+        <article><span>Reportes registrados</span><strong>{reports.length}</strong><small>Eventos puntuales del período</small></article>
         <article><span>Tiempo total</span><strong>{formatNumber(totalDayDowntime)} <em>min</em></strong><small>{formatNumber(totalDayDowntime / 60)} horas acumuladas</small></article>
       </section>
 
@@ -810,8 +815,9 @@ function EquipmentPage({ user }: { user: User }) {
       )}
 
       {error && <div className="error">{error}</div>}
+      {reportMessage && <div className="success-message"><CheckCircle2 size={18} />{reportMessage}</div>}
       {loading ? <div className="loading-panel"><RefreshCw className="spin" size={20} />Consultando equipos con reportes...</div> : !equipmentGroups.length ? (
-        <EmptyState title="No hubo equipos reportados" text={`No se registraron fallas para ${selectedDateLabel}. Escoge otra fecha para consultar.`} />
+        <EmptyState title="No hubo equipos reportados" text={`No se registraron fallas para ${selectedDateLabel}. Escoge otro rango para consultar.`} />
       ) : (
         <section className="incident-equipment-grid" aria-label="Equipos con reportes">
           {equipmentGroups.map((group, index) => {
@@ -842,7 +848,7 @@ function EquipmentPage({ user }: { user: User }) {
                 <article className="incident-report-detail" key={report.id}>
                   <header><span>Reporte {String(index + 1).padStart(2, "0")}</span><strong>{report.failure_mode_name}</strong></header>
                   <div className="incident-damage-grid"><div><small>Qué se dañó</small><p>{report.damage_description}</p></div><div><small>Razón del daño</small><p>{report.reason_description}</p></div></div>
-                  <footer><span>Turno <strong>{report.shift_name}</strong></span><span>Tiempo <strong>{formatNumber(report.downtime_minutes)} min</strong></span><span>Frecuencia <strong>{formatNumber(report.frequency)}</strong></span><span>Reportó <strong>{report.reported_by}</strong></span></footer>
+                  <footer><span>Turno <strong>{report.shift_name}</strong></span><span>Tiempo <strong>{formatNumber(report.downtime_minutes)} min</strong></span><span>Frecuencia <strong>{formatNumber(report.frequency)}</strong></span><span>Reportó <strong>{report.reported_by}</strong></span><ReportDeleteAction reportId={report.id} reportLabel={`reporte ${report.id} de ${report.equipment_name}`} canDelete={user.role === "admin"} onDelete={deleteReport} /></footer>
                 </article>
               ))}
             </div>
@@ -1137,7 +1143,7 @@ function ReportsPage({ user }: { user: User }) {
     setLoadingReports(true);
     setError("");
     try {
-      setDailyReports(await api.request<DailyReport[]>(`/daily-reports?report_date=${encodeURIComponent(reportDate)}`));
+      setDailyReports(await api.request<DailyReport[]>(`/daily-reports?date_from=${encodeURIComponent(reportDate)}&date_to=${encodeURIComponent(reportDate)}`));
     } catch (err) {
       setError((err as Error).message);
     } finally {

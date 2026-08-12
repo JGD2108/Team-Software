@@ -1187,6 +1187,15 @@ td { color: #25312f; font-size: 14px; }
 .incident-report-detail footer { display: flex; flex-wrap: wrap; gap: 7px; padding: 11px 14px; border-top: 1px solid var(--line); }
 .incident-report-detail footer span { padding: 5px 8px; color: var(--muted); border-radius: 4px; background: #f0f3ed; font-size: 10px; }
 .incident-report-detail footer strong { color: var(--steel-dark); }
+.report-delete-action { margin-left: auto; }
+.danger-text { display: inline-flex; align-items: center; gap: 5px; color: #a9362d; }
+.danger-button { color: #fff8ed; border-color: #962f28; background: #a9362d; }
+.danger-button:hover { background: #842820; }
+.report-delete-confirmation { display: grid; gap: 9px; width: min(100%, 390px); margin-top: 9px; padding: 11px; border: 1px solid rgba(169,54,45,.28); border-radius: 6px; background: #fff2eb; }
+.report-delete-confirmation p { display: flex; align-items: flex-start; gap: 7px; margin: 0; color: #68261f; font-size: 12px; line-height: 1.4; }
+.report-delete-confirmation > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.report-delete-error, .report-range-error { color: #9d3028; font-size: 11px; font-weight: 800; }
+.report-range-error { flex-basis: 100%; }
 
 @media (max-width: 760px) {
   .incident-date-panel, .incident-date-actions { align-items: stretch; flex-direction: column; }
