@@ -23,7 +23,10 @@ SHIFT_NAMES = {"1", "2", "3"}
 
 def default_jose_path() -> Path:
     project_root = Path(__file__).resolve().parents[3]
-    return project_root / "añadidos" / JOSE_FILENAME
+    project_copy = project_root / "añadidos" / JOSE_FILENAME
+    if project_copy.exists():
+        return project_copy
+    return Path(__file__).resolve().parents[1] / "data" / JOSE_FILENAME
 
 
 def _text(value: Any) -> str:
