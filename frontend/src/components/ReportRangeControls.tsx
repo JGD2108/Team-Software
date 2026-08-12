@@ -9,6 +9,7 @@ type ReportRangeControlsProps = {
   onDateFromChange: (value: string) => void;
   onDateToChange: (value: string) => void;
   onApply: () => void;
+  className?: string;
 };
 
 export function validateReportDateRange(dateFrom: string, dateTo: string): string | null {
@@ -17,7 +18,7 @@ export function validateReportDateRange(dateFrom: string, dateTo: string): strin
   return null;
 }
 
-export function ReportRangeControls({ dateFrom, dateTo, maxDate, loading, onDateFromChange, onDateToChange, onApply }: ReportRangeControlsProps) {
+export function ReportRangeControls({ dateFrom, dateTo, maxDate, loading, onDateFromChange, onDateToChange, onApply, className = "incident-date-actions" }: ReportRangeControlsProps) {
   const [validationError, setValidationError] = useState("");
 
   function applyRange() {
@@ -27,7 +28,7 @@ export function ReportRangeControls({ dateFrom, dateTo, maxDate, loading, onDate
   }
 
   return (
-    <div className="incident-date-actions">
+    <div className={className}>
       <label><span><CalendarDays size={16} />Fecha inicial</span><input aria-label="Fecha inicial" type="date" max={maxDate} value={dateFrom} onChange={(event) => { setValidationError(""); onDateFromChange(event.target.value); }} /></label>
       <label><span><CalendarDays size={16} />Fecha final</span><input aria-label="Fecha final" type="date" max={maxDate} value={dateTo} onChange={(event) => { setValidationError(""); onDateToChange(event.target.value); }} /></label>
       <button className="secondary" type="button" disabled={loading} onClick={applyRange}><RefreshCw size={16} className={loading ? "spin" : ""} />Actualizar</button>

@@ -126,13 +126,11 @@ def delete_daily_report(
 
 
 @router.post("", status_code=201)
-def create_daily_report(payload: DailyReportIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    # PMP replaces manual failure capture.  Historical GET endpoints remain
-    # available, but this legacy creation route must not add new events.
-    raise HTTPException(status_code=410, detail="El registro manual de fallas fue retirado; consulte los históricos existentes")
+def create_daily_report(payload: DailyReportIn, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return _create_daily_report(payload, admin, db)
 
 
-def _legacy_create_daily_report(payload: DailyReportIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def _create_daily_report(payload: DailyReportIn, user: User, db: Session):
     line = db.get(ProductionLine, payload.production_line_id)
     equipment = db.get(Equipment, payload.equipment_id)
     shift = db.get(Shift, payload.shift_id)

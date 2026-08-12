@@ -52,8 +52,8 @@ def create_manual_report(event_date: date) -> int:
         return event.id
 
 
-def test_manual_daily_report_creation_is_disabled():
-    headers = auth("planta@mantenimiento.local", "Planta123!")
+def test_admin_can_create_manual_daily_report():
+    headers = auth("admin@mantenimiento.local", "Admin123!")
     equipment = client.get("/equipment?include_inactive=false", headers=headers).json()[0]
     shift = client.get("/shifts", headers=headers).json()[0]
     failure_mode = client.get("/failure-modes?include_inactive=false", headers=headers).json()[0]
@@ -73,10 +73,8 @@ def test_manual_daily_report_creation_is_disabled():
             "frequency": 2,
         },
     )
-    assert response.status_code == 410
-    assert "retirado" in response.json()["detail"]
+    assert response.status_code == 201
     assert isinstance(client.get(f"/daily-reports?date_from={report_date.isoformat()}&date_to={report_date.isoformat()}", headers=headers).json(), list)
-    return
     body = response.json()
     assert body["event_date"] == report_date.isoformat()
     assert body["damage_description"] == "RODAMIENTO DEL MOTOR"
@@ -106,6 +104,37 @@ def test_manual_daily_report_creation_is_disabled():
     )
     assert future_response.status_code == 400
     assert future_response.json()["detail"] == "La fecha del reporte no puede ser futura"
+
+    with SessionLocal() as db:
+        event = db.get(MaintenanceEvent, body["id"])
+        assert event is not None
+        assert event.source == "manual_report"
+        assert db.query(AuditLog).filter(AuditLog.entity_id == body["id"], AuditLog.action == "daily_report_create").one()
+
+
+def test_daily_report_creation_requires_admin_permission():
+    headers = auth("planta@mantenimiento.local", "Planta123!")
+    equipment = client.get("/equipment?include_inactive=false", headers=headers).json()[0]
+    shift = client.get("/shifts", headers=headers).json()[0]
+    failure_mode = client.get("/failure-modes?include_inactive=false", headers=headers).json()[0]
+
+    response = client.post(
+        "/daily-reports",
+        headers=headers,
+        json={
+            "event_date": (datetime.now(ZoneInfo("America/Bogota")).date() - timedelta(days=1)).isoformat(),
+            "production_line_id": equipment["production_line_id"],
+            "shift_id": shift["id"],
+            "equipment_id": equipment["id"],
+            "failure_mode_id": failure_mode["id"],
+            "damage_description": "Rodamiento del motor",
+            "reason_description": "Falta de lubricación",
+            "downtime_minutes": 10,
+            "frequency": 1,
+        },
+    )
+
+    assert response.status_code == 403
 
 
 def test_only_admin_can_add_failure_mode():

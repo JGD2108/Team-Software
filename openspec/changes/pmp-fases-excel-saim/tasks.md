@@ -18,7 +18,7 @@
 - [x] 3.2 Implementar administración de personal, turnos, horas disponibles y programación semanal por área PMP.
 - [x] 3.3 Implementar cálculos de capacidad, brecha de horas y personal equivalente requerido por área, turno y periodo.
 - [x] 3.4 Exponer endpoints del tablero PMP, filtros por área y datos de semáforo/alertas.
-- [ ] 3.5 Crear la interfaz PMP para carga, reconciliación, KPI, avance por área, alertas, programación y capacidad.
+- [x] 3.5 Crear la interfaz PMP para carga, reconciliación, KPI, avance por área, alertas, programación y capacidad.
 
 ## 4. Retiro del registro manual
 
@@ -38,7 +38,7 @@
 ## 6. Pruebas y validación de entrega
 
 - [x] 6.1 Crear pruebas de importación y reconciliación de JOSE.xlsx para totales globales y por área, estado y TiempoPlaneado.
-- [ ] 6.2 Crear pruebas para filas inválidas, identificadores ausentes/repetidos, exclusión de horas inválidas y condición de cumplimiento exactamente 90 %.
+- [x] 6.2 Crear pruebas para filas inválidas, identificadores ausentes/repetidos, exclusión de horas inválidas y condición de cumplimiento exactamente 90 %.
 - [x] 6.3 Crear pruebas de capacidad, pendientes, alertas y cálculo de personal equivalente.
 - [ ] 6.4 Crear pruebas SAIM para token inválido, respuesta incompleta, paginación, fallo sin alterar el último corte válido y orden equivalente a Excel sin duplicación.
 - [x] 6.5 Crear pruebas de autorización y regresión que confirmen que el formulario y endpoint manual no permiten nuevas creaciones y que los históricos persisten.

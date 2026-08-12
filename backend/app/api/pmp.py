@@ -1,14 +1,15 @@
-from datetime import date
+from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user, require_admin
 from app.core.database import get_db
 from app.models import PmpArea, PmpImport, PmpPersonnel, PmpWeeklySchedule, User
+from app.schemas.pmp import PmpDashboardResponse, PmpOrdersResponse
 from app.services.audit import log_action
-from app.services.pmp import capacity_metrics, dashboard_metrics, import_jose_workbook, import_summary, reconcile_import, validate_schedule
+from app.services.pmp import capacity_metrics, dashboard_metrics, import_jose_workbook, import_summary, list_orders, metric_dictionary, reconcile_import, validate_schedule
 
 
 router = APIRouter(prefix="/pmp", tags=["pmp"])
@@ -66,9 +67,56 @@ def list_areas(_: User = Depends(current_user), db: Session = Depends(get_db)):
     return [{"id": area.id, "name": area.name, "is_active": area.is_active} for area in db.query(PmpArea).filter(PmpArea.is_active.is_(True)).order_by(PmpArea.name)]
 
 
-@router.get("/dashboard")
-def pmp_dashboard(area: str | None = None, week_start: date | None = None, _: User = Depends(current_user), db: Session = Depends(get_db)):
-    return {"metrics": dashboard_metrics(db, area), "capacity": capacity_metrics(db, week_start, area) if week_start else []}
+@router.get("/dashboard", response_model=PmpDashboardResponse)
+def pmp_dashboard(
+    area: str | None = None,
+    status: str | None = Query(default=None, pattern="^(pending|finalized)$"),
+    as_of_date: date | None = None,
+    week_start: date | None = None,
+    shift: str | None = Query(default=None, pattern="^[123]$"),
+    _: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        metrics = dashboard_metrics(db, area, status, as_of_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Schedules are weekly records. An as-of date selects its actual Monday
+    # rather than pretending the selected day is itself a week_start value.
+    capacity_week = week_start or (as_of_date - timedelta(days=as_of_date.weekday()) if as_of_date else None)
+    capacity = (
+        capacity_metrics(db, capacity_week, metrics, area, shift)
+        if capacity_week
+        else {"week_start": None, "configured": False, "rows": [], "available_shifts": [], "demand_shift_assignment_available": False, "notice": "Seleccione una fecha de corte para consultar la programación semanal."}
+    )
+    return {
+        "metrics": metrics,
+        "capacity": capacity,
+        "metric_dictionary": metric_dictionary(),
+        "filters": {
+            "area": area.upper() if area else None,
+            "status": status,
+            "as_of_date": as_of_date.isoformat() if as_of_date else None,
+            "week_start": capacity_week.isoformat() if capacity_week else None,
+            "shift": shift,
+        },
+    }
+
+
+@router.get("/orders", response_model=PmpOrdersResponse)
+def pmp_orders(
+    area: str | None = None,
+    status: str | None = Query(default=None, pattern="^(pending|finalized)$"),
+    as_of_date: date | None = None,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    _: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return list_orders(db, area, status, as_of_date, offset, limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/personnel")

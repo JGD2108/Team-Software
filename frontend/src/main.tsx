@@ -45,9 +45,10 @@ import {
 import { API_URL, api, Equipment, ProductionLine, Upload, User } from "./lib/api";
 import { ReportDeleteAction } from "./components/ReportDeleteAction";
 import { ReportRangeControls } from "./components/ReportRangeControls";
+import { PmpDashboard, PmpDashboardResponse, PmpFilters, PmpImportError, PmpOrdersResponse } from "./components/PmpDashboard";
 import "./styles.css";
 
-type View = "home" | "dashboard" | "equipment" | "lines" | "pmp" | "management_reports" | "users";
+type View = "home" | "dashboard" | "equipment" | "lines" | "reports" | "pmp" | "management_reports" | "users";
 type NavItem = readonly [View, React.ElementType, string, string];
 type KpiTone = "good" | "warn" | "danger" | "neutral";
 type KpiItem = [string, React.ReactNode, string?, KpiTone?];
@@ -113,6 +114,7 @@ const nav: readonly NavItem[] = [
   ["dashboard", BarChart3, "Dashboard", "Gerencia"],
   ["equipment", Wrench, "Equipos", "Incidentes"],
   ["lines", Factory, "Áreas", "Taxonomía"],
+  ["reports", ClipboardCheck, "Reportes", "Fallas diarias"],
   ["pmp", ClipboardCheck, "PMP", "Plan preventivo"],
   ["management_reports", FileText, "Reportes gerenciales", "Exportación PDF"],
   ["users", Users, "Usuarios", "Accesos"]
@@ -145,7 +147,7 @@ function App() {
 
         <nav className="side-nav" aria-label="Navegación principal">
           {nav.map(([id, Icon, label, meta]) => {
-            if ((id === "users" || id === "management_reports") && user.role !== "admin") return null;
+            if ((id === "reports" || id === "users" || id === "management_reports") && user.role !== "admin") return null;
             return (
               <button key={id} className={view === id ? "active" : ""} onClick={() => setView(id)}>
                 <Icon size={18} />
@@ -181,6 +183,7 @@ function App() {
         {view === "dashboard" && <DashboardPage />}
         {view === "equipment" && <EquipmentPage user={user} />}
         {view === "lines" && <LinesPage user={user} />}
+        {view === "reports" && user.role === "admin" && <ReportsPage user={user} />}
         {view === "pmp" && <PmpPage user={user} />}
         {view === "management_reports" && user.role === "admin" && <ManagementReports />}
         {view === "users" && <UsersPage />}
@@ -1064,7 +1067,8 @@ function ReportsPage({ user }: { user: User }) {
   const [saving, setSaving] = useState(false);
   const [loadingReports, setLoadingReports] = useState(false);
   const todayIso = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const [selectedReportDate, setSelectedReportDate] = useState(todayIso);
+  const [reportDateFrom, setReportDateFrom] = useState(todayIso);
+  const [reportDateTo, setReportDateTo] = useState(todayIso);
   const [form, setForm] = useState({
     event_date: todayIso,
     production_line_id: "",
@@ -1079,7 +1083,7 @@ function ReportsPage({ user }: { user: User }) {
   });
 
   const formDateLabel = formatDate(form.event_date);
-  const selectedDateLabel = formatDate(selectedReportDate);
+  const selectedDateLabel = formatPeriod(reportDateFrom, reportDateTo);
   const availableEquipment = equipment.filter((item) => item.is_active);
   const selectedArea = lines.find((line) => String(line.id) === form.production_line_id);
   const availableProcesses = catalogOptions.processes.filter((process) => process.area_code === selectedArea?.code);
@@ -1116,9 +1120,7 @@ function ReportsPage({ user }: { user: User }) {
     }).catch((err) => setError((err as Error).message));
   }, []);
 
-  useEffect(() => {
-    refreshReports(selectedReportDate);
-  }, [selectedReportDate]);
+  useEffect(() => { refreshReports(); }, []);
 
   useEffect(() => {
     if (!form.production_line_id || !form.process_code || !selectedArea?.code) {
@@ -1139,11 +1141,11 @@ function ReportsPage({ user }: { user: User }) {
     }));
   }
 
-  async function refreshReports(reportDate = selectedReportDate) {
+  async function refreshReports(dateFrom = reportDateFrom, dateTo = reportDateTo) {
     setLoadingReports(true);
     setError("");
     try {
-      setDailyReports(await api.request<DailyReport[]>(`/daily-reports?date_from=${encodeURIComponent(reportDate)}&date_to=${encodeURIComponent(reportDate)}`));
+      setDailyReports(await api.request<DailyReport[]>(`/daily-reports?date_from=${encodeURIComponent(dateFrom)}&date_to=${encodeURIComponent(dateTo)}`));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1173,8 +1175,12 @@ function ReportsPage({ user }: { user: User }) {
       });
       setForm((current) => ({ ...current, equipment_id: "", damage_description: "", reason_description: "", downtime_minutes: "", frequency: "1" }));
       setMessage("Reporte guardado y enviado al dashboard.");
-      if (selectedReportDate === form.event_date) await refreshReports(form.event_date);
-      else setSelectedReportDate(form.event_date);
+      if (reportDateFrom === form.event_date && reportDateTo === form.event_date) await refreshReports(form.event_date, form.event_date);
+      else {
+        setReportDateFrom(form.event_date);
+        setReportDateTo(form.event_date);
+        await refreshReports(form.event_date, form.event_date);
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -1192,6 +1198,14 @@ function ReportsPage({ user }: { user: User }) {
     } catch (err) {
       setError((err as Error).message);
     }
+  }
+
+  async function deleteReport(reportId: number) {
+    setError("");
+    setMessage("");
+    await api.request<{ id: number; deleted: boolean }>(`/daily-reports/${reportId}`, { method: "DELETE" });
+    await refreshReports();
+    setMessage("Reporte eliminado correctamente.");
   }
 
   const ready = Object.values(form).every(Boolean) && Number(form.downtime_minutes) > 0 && Number(form.frequency) > 0;
@@ -1244,11 +1258,11 @@ function ReportsPage({ user }: { user: User }) {
 
       <PageTitle
         title={`Reportes registrados · ${selectedDateLabel}`}
-        subtitle="Escoge una fecha para consultar todos los reportes registrados durante ese día."
-        action={<div className="report-date-control"><label><span><CalendarDays size={16} />Consultar día</span><input required type="date" max={todayIso} value={selectedReportDate} onChange={(e) => e.target.value && setSelectedReportDate(e.target.value)} /></label><button className="secondary" disabled={loadingReports} onClick={() => refreshReports()}><RefreshCw size={16} className={loadingReports ? "spin" : ""} />Actualizar</button></div>}
+        subtitle="Consulta todos los reportes registrados dentro de un rango de fechas, incluyendo ambas fechas."
+        action={<ReportRangeControls className="report-date-control report-range-controls" dateFrom={reportDateFrom} dateTo={reportDateTo} maxDate={todayIso} loading={loadingReports} onDateFromChange={setReportDateFrom} onDateToChange={setReportDateTo} onApply={() => refreshReports()} />}
       />
-      {loadingReports ? <div className="loading-panel"><RefreshCw className="spin" size={20} />Consultando reportes del día...</div> : !dailyReports.length ? <EmptyState title="No hay reportes en esta fecha" text={`No se encontraron registros para ${selectedDateLabel}.`} /> : (
-        <DataTable headers={["Área", "Línea", "Turno", "Activo", "Modo de falla", "Qué se dañó", "Razón", "Tiempo", "Frecuencia", "Reportó"]} rows={dailyReports.map((row) => [row.area_code ? `${row.area_code} · ${row.area_name || row.line_name}` : row.line_name, row.process_code ? `${row.process_code.split("-").slice(-1)[0]} · ${row.process_name || row.process_code}` : "—", row.shift_name, row.equipment_name, <span className="pill warning">{row.failure_mode_name}</span>, row.damage_description, row.reason_description, `${formatNumber(row.downtime_minutes)} min`, formatNumber(row.frequency), row.reported_by])} />
+      {loadingReports ? <div className="loading-panel"><RefreshCw className="spin" size={20} />Consultando reportes del rango...</div> : !dailyReports.length ? <EmptyState title="No hay reportes en este rango" text={`No se encontraron registros para ${selectedDateLabel}.`} /> : (
+        <DataTable headers={["Área", "Línea", "Turno", "Activo", "Modo de falla", "Qué se dañó", "Razón", "Tiempo", "Frecuencia", "Reportó", "Acción"]} rows={dailyReports.map((row) => [row.area_code ? `${row.area_code} · ${row.area_name || row.line_name}` : row.line_name, row.process_code ? `${row.process_code.split("-").slice(-1)[0]} · ${row.process_name || row.process_code}` : "—", row.shift_name, row.equipment_name, <span className="pill warning">{row.failure_mode_name}</span>, row.damage_description, row.reason_description, `${formatNumber(row.downtime_minutes)} min`, formatNumber(row.frequency), row.reported_by, <ReportDeleteAction reportId={row.id} reportLabel={`reporte ${row.id} de ${row.equipment_name}`} canDelete={user.role === "admin"} onDelete={deleteReport} />])} />
       )}
 
     </>
@@ -1533,13 +1547,14 @@ function initials(name: string) {
 type PmpImportSummary = {
   id: number; total_rows: number; valid_rows: number; invalid_rows: number; approved_at?: string | null;
   reconciliation: { matches: boolean; expected: { global: { orders: number; planned_minutes: number } } };
-  errors: { row_number: number; field_name: string; message: string }[];
+  errors: PmpImportError[];
 };
-type PmpDashboardResponse = { metrics: { global: { orders: number; finalized_orders: number; pending_orders: number; planned_minutes: number; compliance_percent: number; compliant: boolean }; by_area: Record<string, { orders: number; pending_minutes: number; compliance_percent: number; compliant: boolean }>; alerts: { message: string }[] }; capacity: { area: string; shift: string; available_minutes: number; pending_minutes: number; gap_minutes: number; fte_required: number; alert: boolean }[] };
 
-function PmpPage({ user }: { user: User }) {
+type LegacyPmpDashboardResponse = { metrics: { global: { orders: number; finalized_orders: number; pending_orders: number; planned_minutes: number; compliance_percent: number; compliant: boolean }; by_area: Record<string, { orders: number; pending_minutes: number; compliance_percent: number; compliant: boolean }>; alerts: { message: string }[] }; capacity: { area: string; shift: string; available_minutes: number; pending_minutes: number; gap_minutes: number; fte_required: number; alert: boolean }[] };
+
+function LegacyPmpPage({ user }: { user: User }) {
   const [summary, setSummary] = useState<PmpImportSummary | null>(null);
-  const [dashboard, setDashboard] = useState<PmpDashboardResponse | null>(null);
+  const [dashboard, setDashboard] = useState<LegacyPmpDashboardResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1548,7 +1563,7 @@ function PmpPage({ user }: { user: User }) {
   async function refresh() {
     setLoading(true); setError("");
     try {
-      const [importResult, dashboardResult] = await Promise.all([api.request<PmpImportSummary | null>("/pmp/imports/latest"), api.request<PmpDashboardResponse>(`/pmp/dashboard?week_start=${weekStart}`)]);
+      const [importResult, dashboardResult] = await Promise.all([api.request<PmpImportSummary | null>("/pmp/imports/latest"), api.request<LegacyPmpDashboardResponse>(`/pmp/dashboard?week_start=${weekStart}`)]);
       setSummary(importResult); setDashboard(dashboardResult);
     } catch (err) { setError((err as Error).message); }
     finally { setLoading(false); }
@@ -1570,6 +1585,50 @@ function PmpPage({ user }: { user: User }) {
       {summary && user.role === "admin" && summary.reconciliation.matches && !summary.approved_at && <button className="primary" disabled={busy} onClick={approve}><CheckCircle2 size={16} />Aprobar reconciliación de Fase 1</button>}
       {dashboard && <section className="content-grid two"><article className="panel"><h2>Avance por especialidad</h2><DataTable headers={["Área", "Órdenes", "Pendientes", "Cumplimiento"]} rows={Object.entries(dashboard.metrics.by_area).map(([area, value]) => [area, formatNumber(value.orders), `${formatNumber(value.pending_minutes / 60)} h`, <span className={value.compliant ? "pill success" : "pill warning"}>{value.compliance_percent}%</span>])} /></article><article className="panel"><h2>Capacidad y brechas</h2>{dashboard.capacity.length ? <DataTable headers={["Área", "Turno", "Capacidad", "Brecha", "FTE"]} rows={dashboard.capacity.map((row) => [row.area, row.shift, `${formatNumber(row.available_minutes / 60)} h`, `${formatNumber(row.gap_minutes / 60)} h`, row.fte_required])} /> : <p className="muted">Configure personal y programación semanal para calcular brechas por turno.</p>}</article></section>}
       {summary?.errors.length ? <section className="panel"><h2>Diagnósticos de importación</h2><DataTable headers={["Fila", "Campo", "Motivo"]} rows={summary.errors.slice(0, 20).map((item) => [item.row_number, item.field_name, item.message])} /></section> : null}
+    </>}
+  </section>;
+}
+
+function PmpPage({ user }: { user: User }) {
+  const [summary, setSummary] = useState<PmpImportSummary | null>(null);
+  const [dashboard, setDashboard] = useState<PmpDashboardResponse | null>(null);
+  const [orders, setOrders] = useState<PmpOrdersResponse | null>(null);
+  const [areas, setAreas] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [filters, setFilters] = useState<PmpFilters>(() => {
+    try { return { area: "", status: "", as_of_date: "", shift: "", unit: "hours", ...JSON.parse(localStorage.getItem("pmp-dashboard-filters") || "{}") }; }
+    catch { return { area: "", status: "", as_of_date: "", shift: "", unit: "hours" }; }
+  });
+  const [orderOffset, setOrderOffset] = useState(0);
+
+  useEffect(() => { localStorage.setItem("pmp-dashboard-filters", JSON.stringify(filters)); }, [filters]);
+  async function refresh(offset = orderOffset) {
+    setLoading(true); setError("");
+    try {
+      const params = queryString({ area: filters.area, status: filters.status, as_of_date: filters.as_of_date, shift: filters.shift });
+      const [importResult, dashboardResult, ordersResult, areaResult] = await Promise.all([
+        api.request<PmpImportSummary | null>("/pmp/imports/latest"),
+        api.request<PmpDashboardResponse>(`/pmp/dashboard${params}`),
+        api.request<PmpOrdersResponse>(`/pmp/orders${queryString({ area: filters.area, status: filters.status, as_of_date: filters.as_of_date, offset, limit: 30 })}`),
+        api.request<{ name: string }[]>("/pmp/areas"),
+      ]);
+      setSummary(importResult); setDashboard(dashboardResult); setOrders(ordersResult); setAreas(areaResult.map((area) => area.name)); setOrderOffset(offset);
+    } catch (err) { setError((err as Error).message); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { refresh(0); }, [filters.area, filters.status, filters.as_of_date, filters.shift]);
+  async function executeImport() { setBusy(true); try { setSummary(await api.request<PmpImportSummary>("/pmp/imports/jose", { method: "POST" })); await refresh(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }
+  async function approve() { if (!summary) return; setBusy(true); try { setSummary(await api.request<PmpImportSummary>(`/pmp/imports/${summary.id}/approve`, { method: "POST" })); await refresh(); } catch (err) { setError((err as Error).message); } finally { setBusy(false); } }
+
+  return <section className="page-content pmp-page">
+    <PageTitle title="Plan de Mantenimiento Preventivo" subtitle="Cumplimiento, carga pendiente y capacidad verificable por área." action={<div className="actions"><button className="secondary" onClick={() => refresh()}><RefreshCw size={16} />Actualizar</button>{user.role === "admin" && <button className="primary" disabled={busy} onClick={executeImport}><UploadCloud size={16} />{busy ? "Procesando..." : "Cargar JOSE.xlsx"}</button>}</div>} />
+    {error && <div className="error-banner">{error}</div>}
+    {loading ? <div className="loading-panel"><RefreshCw className="spin" />Cargando indicadores PMP...</div> : <>
+      {!summary ? <EmptyState title="Carga inicial pendiente" text="Un administrador debe ejecutar la carga obligatoria de JOSE.xlsx antes de validar el PMP." /> : <section className="pmp-import-strip"><span><Database size={16} />{formatNumber(summary.total_rows)} filas fuente</span><span>{formatNumber(summary.valid_rows)} válidas · {formatNumber(summary.invalid_rows)} diagnósticos</span><span className={summary.reconciliation.matches ? "good" : "danger"}>{summary.reconciliation.matches ? "Reconciliación sin diferencias" : "Reconciliación con diferencias"}</span>{summary.approved_at && <span className="good">Fase 1 aprobada</span>}</section>}
+      {summary && user.role === "admin" && summary.reconciliation.matches && !summary.approved_at && <button className="primary" disabled={busy} onClick={approve}><CheckCircle2 size={16} />Aprobar reconciliación de Fase 1</button>}
+      {dashboard && orders && <PmpDashboard dashboard={dashboard} orders={orders} errors={summary?.errors || []} areas={areas} filters={filters} onFiltersChange={setFilters} onOrderPage={(offset) => refresh(offset)} />}
     </>}
   </section>;
 }
