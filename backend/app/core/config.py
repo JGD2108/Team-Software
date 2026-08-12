@@ -1,7 +1,11 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic_settings import BaseSettings
+
+
+storage_root = Path("/tmp") if os.getenv("VERCEL") else Path(".")
 
 
 class Settings(BaseSettings):
@@ -10,8 +14,8 @@ class Settings(BaseSettings):
     secret_key: str = "change-me-in-production"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 8
-    upload_dir: Path = Path("./storage/uploads")
-    report_dir: Path = Path("./storage/reports")
+    upload_dir: Path = storage_root / "storage/uploads"
+    report_dir: Path = storage_root / "storage/reports"
     max_upload_mb: int = 20
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 

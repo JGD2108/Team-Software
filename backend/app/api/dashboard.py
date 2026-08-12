@@ -49,6 +49,11 @@ def dashboard_summary(
     total_events = q.count()
     total_frequency = q.with_entities(func.coalesce(func.sum(MaintenanceEvent.frequency), 0)).scalar()
 
+    date_range = q.with_entities(
+        func.min(MaintenanceEvent.event_date),
+        func.max(MaintenanceEvent.event_date),
+    ).first()
+
     def pairs(model, field, metric="downtime"):
         value = func.sum(MaintenanceEvent.downtime_minutes if metric == "downtime" else MaintenanceEvent.frequency)
         rows = (
@@ -61,18 +66,65 @@ def dashboard_summary(
         )
         return [{"name": r.name or "Sin turno", "value": float(r.value or 0)} for r in rows]
 
-    equipment_time = pairs(Equipment, Equipment.name, "downtime")
+    equipment_rows = (
+        q.join(Equipment)
+        .with_entities(
+            Equipment.name.label("name"),
+            func.sum(MaintenanceEvent.downtime_minutes).label("downtime"),
+            func.sum(MaintenanceEvent.frequency).label("frequency"),
+            func.count(MaintenanceEvent.id).label("events"),
+        )
+        .group_by(Equipment.name)
+        .order_by(func.sum(MaintenanceEvent.downtime_minutes).desc())
+        .limit(12)
+        .all()
+    )
+    equipment_time = [{"name": row.name, "value": float(row.downtime or 0)} for row in equipment_rows]
     equipment_freq = pairs(Equipment, Equipment.name, "frequency")
     lines = pairs(ProductionLine, ProductionLine.name, "downtime")
     shifts = pairs(Shift, Shift.name, "downtime")
-    damages = q.with_entities(MaintenanceEvent.damage_description.label("name"), func.sum(MaintenanceEvent.downtime_minutes).label("value")).group_by(MaintenanceEvent.damage_description).order_by(func.sum(MaintenanceEvent.downtime_minutes).desc()).limit(10).all()
     reasons = q.with_entities(MaintenanceEvent.reason_description.label("name"), func.sum(MaintenanceEvent.downtime_minutes).label("value")).group_by(MaintenanceEvent.reason_description).order_by(func.sum(MaintenanceEvent.downtime_minutes).desc()).limit(10).all()
     months = q.with_entities(MaintenanceEvent.year, MaintenanceEvent.month, func.sum(MaintenanceEvent.downtime_minutes).label("downtime"), func.count(MaintenanceEvent.id).label("events")).group_by(MaintenanceEvent.year, MaintenanceEvent.month).order_by(MaintenanceEvent.year, MaintenanceEvent.month).all()
+    days = (
+        q.with_entities(
+            MaintenanceEvent.event_date.label("date"),
+            func.sum(MaintenanceEvent.downtime_minutes).label("downtime"),
+            func.sum(MaintenanceEvent.frequency).label("frequency"),
+            func.count(MaintenanceEvent.id).label("events"),
+        )
+        .group_by(MaintenanceEvent.event_date)
+        .order_by(MaintenanceEvent.event_date)
+        .all()
+    )
     pareto = []
     running = 0.0
     for item in equipment_time:
         running += item["value"]
         pareto.append({**item, "cumulative": round((running / total_minutes * 100) if total_minutes else 0, 2)})
+
+    critical_equipment = []
+    running = 0.0
+    for row in equipment_rows:
+        downtime = float(row.downtime or 0)
+        frequency = float(row.frequency or 0)
+        running += downtime
+        critical_equipment.append({
+            "name": row.name,
+            "downtime": downtime,
+            "frequency": frequency,
+            "events": int(row.events or 0),
+            "mttr": round(downtime / frequency, 1) if frequency else 0,
+            "percentage": round((downtime / total_minutes * 100) if total_minutes else 0, 2),
+            "cumulative": round((running / total_minutes * 100) if total_minutes else 0, 2),
+        })
+
+    frequency_by_equipment = {row.name: float(row.frequency or 0) for row in equipment_rows}
+    peak_day = max(days, key=lambda row: float(row.downtime or 0), default=None)
+    top_four_minutes = sum(item["value"] for item in equipment_time[:4])
+    top_four_percentage = round((top_four_minutes / total_minutes * 100) if total_minutes else 0, 1)
+    mttr = round(float(total_minutes or 0) / float(total_frequency or 0), 1) if total_frequency else 0
+    critical_name = equipment_time[0]["name"] if equipment_time else "Sin datos"
+    critical_line = lines[0]["name"] if lines else "Sin datos"
 
     return {
         "kpis": {
@@ -80,19 +132,44 @@ def dashboard_summary(
             "total_hours": round(float(total_minutes or 0) / 60, 2),
             "total_events": total_events,
             "total_frequency": float(total_frequency or 0),
-            "critical_equipment": equipment_time[0]["name"] if equipment_time else "Sin datos",
-            "critical_line": lines[0]["name"] if lines else "Sin datos",
+            "mttr": mttr,
+            "critical_equipment": critical_name,
+            "critical_line": critical_line,
             "validated_records": total_events,
+            "top_four_percentage": top_four_percentage,
+        },
+        "period": {
+            "date_from": date_range[0].isoformat() if date_range and date_range[0] else None,
+            "date_to": date_range[1].isoformat() if date_range and date_range[1] else None,
         },
         "downtime_by_month": [{"name": f"{r.year}-{int(r.month):02d}", "downtime": float(r.downtime or 0), "events": int(r.events)} for r in months],
+        "daily_trend": [{"name": r.date.isoformat(), "downtime": float(r.downtime or 0), "frequency": float(r.frequency or 0), "events": int(r.events)} for r in days],
         "downtime_by_line": lines,
         "top_equipment_downtime": equipment_time,
         "top_equipment_frequency": equipment_freq,
         "pareto": pareto,
-        "downtime_vs_frequency": [{"name": a["name"], "downtime": a["value"], "frequency": next((b["value"] for b in equipment_freq if b["name"] == a["name"]), 0)} for a in equipment_time],
-        "top_damages": [{"name": r.name, "value": float(r.value or 0)} for r in damages],
+        "downtime_vs_frequency": [{"name": a["name"], "downtime": a["value"], "frequency": frequency_by_equipment.get(a["name"], 0)} for a in equipment_time],
+        "critical_equipment": critical_equipment,
         "top_reasons": [{"name": r.name, "value": float(r.value or 0)} for r in reasons],
         "by_shift": shifts,
+        "insights": {
+            "highest_downtime": {
+                "name": critical_name,
+                "minutes": equipment_time[0]["value"] if equipment_time else 0,
+                "percentage": critical_equipment[0]["percentage"] if critical_equipment else 0,
+            },
+            "highest_frequency": {
+                "name": equipment_freq[0]["name"] if equipment_freq else "Sin datos",
+                "frequency": equipment_freq[0]["value"] if equipment_freq else 0,
+            },
+            "peak_day": {
+                "date": peak_day.date.isoformat() if peak_day else None,
+                "minutes": float(peak_day.downtime or 0) if peak_day else 0,
+                "events": int(peak_day.events or 0) if peak_day else 0,
+            },
+            "top_four_minutes": top_four_minutes,
+            "top_four_percentage": top_four_percentage,
+        },
     }
 
 

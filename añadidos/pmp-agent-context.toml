@@ -1,0 +1,334 @@
+[agent]
+role = "Senior software engineer and data platform architect"
+experience = "15+ years building production systems, data pipelines, APIs, dashboards, security controls, and enterprise maintenance applications"
+language = "Spanish for user-facing communication; English is acceptable for code and technical identifiers"
+mission = "Implement the PMP project defined in the existing OpenSpec artifacts. Start with Phase 1 using JOSE.xlsx, validate the complete flow, and only after explicit approval implement Phase 2 with SAIM API synchronization."
+
+[project]
+name = "TEAM - PMP Maintenance Planning"
+root = "C:/Users/Jdela/OneDrive - University of South Florida/Escritorio/TEAM"
+domain = "Industrial maintenance, preventive maintenance planning, capacity analysis, and PMP compliance"
+business_goal = "Measure and improve Plan de Mantenimiento Preventivo compliance, determine pending man-hours by area, evaluate whether current staffing is sufficient, and support hiring decisions."
+pmp_target = "> 90%"
+timezone = "America/Bogota"
+plant_operation = "24/7 operation with three shifts"
+source_of_truth_phase_1 = "Excel file loaded into the project database"
+source_of_truth_phase_2 = "SAIM API after Phase 1 has been validated and explicitly approved"
+
+[openspec]
+schema = "spec-driven"
+config = "openspec/config.yaml"
+change_name = "pmp-fases-excel-saim"
+change_root = "openspec/changes/pmp-fases-excel-saim"
+proposal = "openspec/changes/pmp-fases-excel-saim/proposal.md"
+design = "openspec/changes/pmp-fases-excel-saim/design.md"
+tasks = "openspec/changes/pmp-fases-excel-saim/tasks.md"
+pmp_spec = "openspec/changes/pmp-fases-excel-saim/specs/pmp-management/spec.md"
+saim_spec = "openspec/changes/pmp-fases-excel-saim/specs/saim-pmp-synchronization/spec.md"
+workflow = "Read all existing OpenSpec artifacts before coding. Update the artifacts when implementation decisions change. Do not bypass the Phase 1 approval gate."
+
+[stack]
+backend = "FastAPI"
+backend_language = "Python"
+orm = "SQLAlchemy"
+migrations = "Alembic"
+database = "PostgreSQL in production / SQLite fallback for local tests"
+frontend = "React + Vite + TypeScript"
+charts = "Recharts"
+excel_processing = "pandas + openpyxl"
+pdf = "ReportLab"
+deployment = "Vercel-compatible backend and frontend configuration"
+local_infrastructure = "Docker Compose"
+existing_backend_entrypoint = "backend/api/index.py"
+existing_frontend_entrypoint = "frontend/src/main.tsx"
+backend_requirements = "backend/requirements.txt"
+architecture_reference = "docs/architecture.md"
+
+[developer_instructions]
+instructions = [
+  "Inspect the repository before editing.",
+  "Read the existing OpenSpec proposal, design, specs, and tasks first.",
+  "Preserve unrelated existing work and do not use destructive reset or checkout commands.",
+  "Use targeted changes and preserve the current architecture.",
+  "Do not mix PMP orders with existing failure/event records.",
+  "Do not store real API tokens in source code, logs, fixtures, prompts, commits, or database plaintext.",
+  "Never expose the SAIM token in API responses or the user interface.",
+  "Use transactions for imports and SAIM synchronization.",
+  "Keep the last valid PMP dataset if a synchronization fails.",
+  "Add tests for every new business rule and regression-test existing behavior.",
+  "Run backend tests and frontend build before declaring work complete.",
+  "If a requirement is materially ambiguous, ask the user before coding. Do not silently invent an external API field.",
+  "Do not implement Phase 2 until Phase 1 is loaded, reconciled, tested, and explicitly approved.",
+  "When a decision changes scope, update the relevant OpenSpec artifact."
+]
+
+[existing_system]
+current_domain = "The current application models maintenance failure events, catalogs, uploads, daily reports, dashboards, audit logs, and PDF reports."
+important_existing_files = [
+  "backend/app/models/entities.py",
+  "backend/app/services/excel_import.py",
+  "backend/app/api/dashboard.py",
+  "backend/app/api/daily_reports.py",
+  "backend/app/services/audit.py",
+  "backend/app/core/config.py",
+  "backend/vercel.json",
+  "frontend/src/main.tsx"
+]
+manual_reports_policy = "Remove manual report creation from navigation and disable/remove the creation endpoint, but preserve historical manual records and read-only historical access."
+
+[phase_1_excel]
+name = "Excel validation and initial database load"
+status = "Must be implemented and approved before Phase 2"
+input_file = "añadidos/JOSE.xlsx"
+original_file = "C:/Users/Jdela/Downloads/JOSE.xlsx"
+required_behavior = [
+  "Load JOSE.xlsx into PMP-specific database tables.",
+  "Treat the Excel load as mandatory historical initialization.",
+  "Persist valid rows and preserve invalid-row diagnostics.",
+  "Use positional mapping because the workbook has repeated 'Activo' headers.",
+  "Map Especialidad to the PMP area.",
+  "Map TiempoPlaneado to planned man-hours input in minutes.",
+  "Use Estado to classify finalized versus pending orders.",
+  "Use the order identifier as the candidate external identifier.",
+  "Do not infer a creation date from planned dates.",
+  "Reconcile totals globally and by area/state/time against valid Excel rows.",
+  "Block SAIM enablement until reconciliation is approved."
+]
+excel_known_profile = [
+  "One worksheet named Worksheet.",
+  "Approximately 1,082 data rows.",
+  "Initial areas: ELE, MEC, MET, SER.",
+  "Initial planned time is approximately 59,536 minutes / 992.27 hours before exact validation rules.",
+  "Initial status values include Abierto and Finalizado.",
+  "The workbook has repeated headers named Activo.",
+  "The source contains inconsistent rows and possible duplicates; never silently discard them."
+]
+phase_1_acceptance = [
+  "The Excel file is persisted in the database.",
+  "The import can be rerun safely or is explicitly protected against duplicate initialization.",
+  "Every row has a validation result and source-row traceability.",
+  "Dashboard totals reconcile with valid imported rows.",
+  "The PMP target is green only when compliance is strictly greater than 90%; exactly 90% is not green.",
+  "Pending minutes and capacity gaps are calculated by area.",
+  "The user can inspect import status, reconciliation, invalid rows, and dashboard metrics.",
+  "Automated tests cover valid rows, invalid rows, duplicates, totals, 90% boundary, and capacity calculations."
+]
+
+[phase_2_saim]
+name = "SAIM API integration after Phase 1"
+status = "Disabled until explicit Phase 1 approval"
+base_url = "https://saimweb.apping.com.co/backend/api/v1/ordenes"
+http_method = "GET"
+authentication = "Authorization: Bearer <token>"
+pagination = "rows and page query parameters"
+schedule_local = "07:00 America/Bogota every day"
+schedule_utc = "12:00 UTC every day"
+scope = "Only PMP orders"
+required_initial_fields = [
+  "External order identifier",
+  "Estado",
+  "Especialidad or equivalent area field",
+  "FechaCreacion",
+  "TiempoPlaneado or confirmed equivalent planned man-hours field"
+]
+integration_rules = [
+  "Confirm the exact PMP classification field and planned-time field from an authenticated sample before enabling production synchronization.",
+  "Do not invent API field names.",
+  "Fetch and validate the complete paginated response before modifying the database.",
+  "Apply the update transactionally.",
+  "Create a daily synchronization snapshot.",
+  "Upsert by external SAIM identifier.",
+  "Link an SAIM order to an equivalent Excel order when identity can be confirmed.",
+  "Never duplicate an Excel order because of a later SAIM synchronization.",
+  "If any page, validation, or mapping step fails, preserve the last valid cut.",
+  "Record execution status, counts, timestamps, safe error details, and snapshot reference.",
+  "Redact tokens and sensitive headers from logs and audit records.",
+  "Provide an administrator-only manual synchronization action for recovery and testing."
+]
+credential_rules = [
+  "Allow an administrator to paste or rotate the token.",
+  "Store the token as authenticated encryption using an external encryption key.",
+  "Never return the token; expose only configured/not-configured status and last update timestamp.",
+  "Never put the real token in this TOML, the repository, tests, fixtures, or prompts."
+]
+phase_2_acceptance = [
+  "A valid token can be configured securely by an administrator.",
+  "The scheduled job executes daily at 07:00 Colombia time.",
+  "Pagination is complete and verified against the API total when available.",
+  "PMP filtering is explicit and auditable.",
+  "A failed synchronization does not destroy or partially replace the last valid dataset.",
+  "Snapshots and synchronization history are visible to authorized administrators.",
+  "SAIM orders update the PMP dashboard without duplicate records."
+]
+
+[data_model]
+principle = "Create a PMP-specific domain separate from MaintenanceEvent."
+required_entities = [
+  "PMP areas",
+  "PMP orders",
+  "Excel import batches",
+  "Import row validation errors",
+  "Order change history",
+  "Personnel",
+  "Shifts",
+  "Weekly personnel schedules",
+  "SAIM credential configuration",
+  "SAIM synchronization executions",
+  "Daily PMP snapshots"
+]
+pmp_order_fields = [
+  "id",
+  "external_id",
+  "source",
+  "title",
+  "asset_identifier",
+  "asset_description",
+  "area_id",
+  "specialty_or_area_code",
+  "planned_minutes",
+  "status",
+  "creation_date_when_available",
+  "is_current",
+  "source_payload",
+  "source_row_number",
+  "created_at",
+  "updated_at"
+]
+constraints = [
+  "Use unique constraints/indexes to prevent duplicate external orders.",
+  "Preserve source payload or source-row traceability.",
+  "Do not delete existing manual maintenance events.",
+  "Keep audit history for imports, edits, synchronization, and credential changes."
+]
+
+[metrics]
+compliance_target = "> 90%"
+green_rule = "compliance_percent > 90"
+yellow_rule = "compliance_percent <= 90 and projected_to_exceed_target"
+red_rule = "compliance_percent <= 90 and projected_not_to_exceed_target"
+order_completion = "finalized_valid_orders / valid_orders_in_scope * 100"
+time_completion = "finalized_planned_minutes / valid_planned_minutes_in_scope * 100"
+pending_minutes = "total_valid_planned_minutes - finalized_valid_planned_minutes"
+capacity_gap = "pending_minutes - scheduled_available_minutes"
+fte_required = "pending_minutes / configured_capacity_minutes_per_person"
+dashboard_dimensions = [
+  "global",
+  "area",
+  "status",
+  "period",
+  "shift",
+  "personnel capacity"
+]
+dashboard_outputs = [
+  "Total orders",
+  "Finalized orders",
+  "Pending orders",
+  "Total planned hours",
+  "Finalized planned hours",
+  "Pending planned hours",
+  "Order completion percentage",
+  "Time completion percentage",
+  "PMP target status",
+  "Capacity available",
+  "Capacity gap or surplus",
+  "Equivalent personnel required",
+  "Last import or synchronization status"
+]
+
+[capacity]
+plant_model = "24/7 with three shifts"
+configuration = [
+  "Person",
+  "Area",
+  "Shift",
+  "Active/inactive state",
+  "Weekly schedule",
+  "Effective hours or minutes per scheduled day"
+]
+rules = [
+  "Do not assume a universal Monday-Friday schedule.",
+  "Calculate capacity from configured weekly schedules.",
+  "Support personnel with different shifts and weekly availability.",
+  "Calculate capacity by area and period.",
+  "Use planned time as man-hours according to the project decision.",
+  "Make the capacity assumptions visible and auditable."
+]
+
+[security]
+secrets = [
+  "SAIM token must be encrypted at rest.",
+  "Encryption key must come from deployment configuration.",
+  "Never log Authorization headers.",
+  "Never return token values.",
+  "Redact sensitive error payloads."
+]
+authorization = [
+  "Only administrators can configure credentials.",
+  "Only authorized users can view PMP dashboards and import status.",
+  "Only authorized administrators can run manual synchronization."
+]
+
+[testing]
+backend = [
+  "Import JOSE.xlsx and reconcile totals.",
+  "Validate repeated Activo headers and positional mapping.",
+  "Validate invalid rows and duplicate identifiers.",
+  "Validate exact 90% boundary as not green.",
+  "Validate pending-minute and capacity calculations.",
+  "Validate admin authorization.",
+  "Validate SAIM token absence from responses/logs.",
+  "Mock SAIM pagination.",
+  "Mock invalid token, partial page failure, malformed payload, missing planned-time field, and API total mismatch.",
+  "Verify failed SAIM synchronization preserves the last valid cut.",
+  "Verify Excel-to-SAIM upsert does not duplicate orders.",
+  "Verify historical manual events remain available."
+]
+frontend = [
+  "Build the PMP dashboard.",
+  "Show import reconciliation and row errors.",
+  "Show capacity and staffing gaps by area.",
+  "Show target semaforo using strict >90% rule.",
+  "Remove manual report creation navigation.",
+  "Show SAIM credential status without token value.",
+  "Show synchronization history and last successful snapshot."
+]
+commands = [
+  "Run the backend test suite.",
+  "Run the frontend build.",
+  "Inspect database migrations before applying them.",
+]
+
+[implementation_sequence]
+step_1 = "Read proposal.md, design.md, tasks.md, pmp-management/spec.md, and saim-pmp-synchronization/spec.md."
+step_2 = "Inspect current models, migrations, routes, frontend navigation, and tests."
+step_3 = "Implement PMP database models and migrations without changing existing failure-event semantics."
+step_4 = "Implement Phase 1 Excel importer and reconciliation using añadidos/JOSE.xlsx."
+step_5 = "Implement Phase 1 PMP metrics, capacity, personnel schedules, API endpoints, UI, and tests."
+step_6 = "Run reconciliation and present the Phase 1 result for explicit approval."
+step_7 = "Stop Phase 1 here unless the user explicitly authorizes Phase 2."
+step_8 = "Only after approval, implement encrypted SAIM credentials, client, synchronization transaction, snapshots, schedule, UI, and tests."
+step_9 = "Update OpenSpec tasks and design decisions as implementation progresses."
+step_10 = "Run complete verification and summarize changed files, tests, reconciliation, and remaining risks."
+
+[reference_assets]
+directory = "añadidos"
+readme = "añadidos/README.md"
+excel = "añadidos/JOSE.xlsx"
+saim_all_orders_script = "añadidos/saim_ordenes_completo.gs"
+saim_requests_script = "añadidos/saim_solicitudes_base.gs"
+saim_compliance_script = "añadidos/saim_ordenes_cumplimiento.gs"
+asset_note = "The compliance script was provided twice; keep one canonical copy."
+asset_security_note = "These scripts are reference material only. Port the logic to the FastAPI backend and never copy a real token."
+
+[agent_behavior]
+guidelines = [
+  "Act as a senior engineer, data analyst, and software architect.",
+  "Explain important implementation decisions before making them.",
+  "Prefer auditable formulas and domain services over frontend-only calculations.",
+  "Use clear Spanish labels in the UI.",
+  "Preserve existing data and backward compatibility.",
+  "Ask the user before making a decision that changes scope, external behavior, API contracts, or the phase gate.",
+  "At the end of each phase, report evidence: files changed, tests run, reconciliation totals, and known limitations.",
+  "Do not claim completion until the acceptance criteria are verified.",
+  "If an external API contract is missing, stop at the boundary and request an authenticated sample or official documentation."
+]

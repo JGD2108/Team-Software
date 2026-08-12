@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class LoginIn(BaseModel):
@@ -41,6 +41,7 @@ class Token(BaseModel):
 
 class LineIn(BaseModel):
     name: str
+    code: str | None = None
     is_active: bool = True
 
 
@@ -49,12 +50,14 @@ class LineOut(BaseModel):
 
     id: int
     name: str
+    code: str | None = None
     is_active: bool
 
 
 class EquipmentIn(BaseModel):
     name: str
     production_line_id: int
+    code: str | None = None
     is_active: bool = True
 
 
@@ -63,8 +66,56 @@ class EquipmentOut(BaseModel):
 
     id: int
     name: str
-    production_line_id: int
+    production_line_id: int | None
+    code: str | None = None
+    parent_code: str | None = None
+    hierarchy_level: int | None = None
+    plant_code: str | None = None
+    plant_name: str | None = None
+    area_code: str | None = None
+    area_name: str | None = None
+    process_code: str | None = None
+    process_name: str | None = None
+    is_reportable: bool
+    brand: str | None = None
+    model: str | None = None
+    serial_number: str | None = None
+    location: str | None = None
+    qr_code: str | None = None
+    criticality: str | None = None
+    specialty: str | None = None
+    grouping: str | None = None
+    analysis_group: str | None = None
+    pdt_group: str | None = None
+    source_status: str | None = None
+    financial_code: str | None = None
+    cost_center: str | None = None
     is_active: bool
+
+
+class FailureModeIn(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    is_active: bool = True
+
+
+class FailureModeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    is_active: bool
+
+
+class DailyReportIn(BaseModel):
+    event_date: date
+    production_line_id: int
+    shift_id: int
+    equipment_id: int
+    failure_mode_id: int
+    damage_description: str = Field(min_length=3, max_length=500)
+    reason_description: str = Field(min_length=3, max_length=500)
+    downtime_minutes: float = Field(gt=0, le=1440)
+    frequency: int = Field(ge=1, le=1000)
 
 
 class UploadOut(BaseModel):

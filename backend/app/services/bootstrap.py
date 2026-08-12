@@ -1,7 +1,18 @@
 from sqlalchemy.orm import Session
 
 from app.core.security import hash_password
-from app.models import Equipment, ProductionLine, Shift, User
+from app.models import Equipment, FailureMode, ProductionLine, Shift, User
+
+
+DEFAULT_FAILURE_MODES = [
+    "DA\u00d1O BANDA",
+    "FALLA MEC\u00c1NICA",
+    "FALLA EL\u00c9CTRICA",
+    "TIEMPO A CORREGIR",
+    "FALLA NEUM\u00c1TICA",
+    "FALLA POR CODIFICADORA",
+    "FALLA DE AUTOMATIZACI\u00d3N",
+]
 
 
 def seed_initial_data(db: Session) -> None:
@@ -25,9 +36,13 @@ def seed_initial_data(db: Session) -> None:
                 is_active=True,
             )
         )
-    for shift in ["Turno A", "Turno B", "Turno C", "Sin turno"]:
+    for shift in ["1", "2", "3"]:
         if not db.query(Shift).filter(Shift.name == shift).first():
             db.add(Shift(name=shift, is_active=True))
+    db.query(Shift).filter(Shift.name.notin_(["1", "2", "3"])).update({"is_active": False}, synchronize_session=False)
+    for mode_name in DEFAULT_FAILURE_MODES:
+        if not db.query(FailureMode).filter(FailureMode.name == mode_name).first():
+            db.add(FailureMode(name=mode_name, is_active=True))
     db.flush()
     if not db.query(ProductionLine).first():
         line_a = ProductionLine(name="Linea 1", is_active=True)
